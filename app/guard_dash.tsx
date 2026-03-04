@@ -288,7 +288,6 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
 
       // If assignments exist in session, find the one that matches the user_id
       if (storedUserData.assignments && storedUserData.assignments.length > 0) {
-        console.log(storedUserData)
         const userAssignment = storedUserData.assignments.find((assignment: { user_id: any; }) => assignment.user_id === storedUserData.id);
         if (userAssignment) {
           const assignedLocation = fetchedLocations.find(loc => loc.id === userAssignment.location);
@@ -778,13 +777,11 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
 
   // Handle logout - show custom modal instead of Alert
   const handleLogout = () => {
-    console.log('Logout button pressed - showing custom modal');
     setLogoutModalVisible(true);
   };
 
   // Perform the actual logout
   const performLogout = async () => {
-    console.log('Starting logout process...');
     setLogoutModalVisible(false);
 
     if (isRecording || patrolId) {
@@ -815,15 +812,12 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
 
       // Clear user session
       await clearUserSession();
-      console.log('Session cleared successfully');
       
       // Clear persistent patrol data
       await AsyncStorage.removeItem('ongoingPatrol');
-      console.log('Patrol data cleared');
       
       // Navigate to login
       router.replace('/login');
-      console.log('Navigated to login');
     } catch (error) {
       console.error('Logout error:', error);
       Alert.alert('Error', 'Failed to logout. Please try again.');
@@ -1842,7 +1836,6 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
               <TouchableOpacity
                 style={[styles.modalButton, styles.modalCancel]}
                 onPress={() => {
-                  console.log('Logout cancelled by user');
                   setLogoutModalVisible(false);
                 }}
               >
