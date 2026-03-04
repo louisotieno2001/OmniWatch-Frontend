@@ -12,6 +12,9 @@
       "supportsTablet": true
     },
     "android": {
+      "permissions": [
+        "android.permission.CALL_PHONE"
+      ],
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-chrome-192x192.png",
@@ -49,7 +52,7 @@
       "eas": {
         "projectId": "75e426ae-f166-4810-9abf-4b668bffbe3d"
       },
-      "apiUrl": "http://10.204.202.37:5000/api"
+      "apiUrl": "http://10.22.134.22:5000/api"
     }
   }
 }

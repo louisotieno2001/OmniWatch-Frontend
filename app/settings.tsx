@@ -9,6 +9,8 @@ import {
   Switch,
   Alert,
   Linking,
+  PermissionsAndroid,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -30,6 +32,7 @@ export default function SettingsScreen() {
   // Camera & Media Settings
   const [cameraPermission, setCameraPermission] = useState(false);
   const [mediaPermission, setMediaPermission] = useState(false);
+  const [phonePermission, setPhonePermission] = useState(Platform.OS === 'ios');
 
   // Load settings on mount
   useEffect(() => {
@@ -48,6 +51,15 @@ export default function SettingsScreen() {
 
       const { status: mediaStatus } = await ImagePicker.getMediaLibraryPermissionsAsync();
       setMediaPermission(mediaStatus === 'granted');
+
+      if (Platform.OS === 'android') {
+        const hasPhonePermission = await PermissionsAndroid.check(
+          PermissionsAndroid.PERMISSIONS.CALL_PHONE
+        );
+        setPhonePermission(hasPhonePermission);
+      } else {
+        setPhonePermission(true);
+      }
     } catch (error) {
       console.error('Error checking permissions:', error);
     }
@@ -146,6 +158,66 @@ export default function SettingsScreen() {
       }
       setMediaPermission(true);
       Alert.alert('Success', 'Media library permission granted');
+    }
+  };
+
+  const requestPhonePermission = async () => {
+    try {
+      if (Platform.OS !== 'android') {
+        setPhonePermission(true);
+        Alert.alert('Info', 'Phone permission is managed by iOS. You can place calls directly.');
+        return;
+      }
+
+      const status = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.CALL_PHONE,
+        {
+          title: 'Phone Permission',
+          message: 'OmniWatch needs phone access so you can call guards directly from the app.',
+          buttonNegative: 'Cancel',
+          buttonPositive: 'Allow',
+        }
+      );
+
+      const granted = status === PermissionsAndroid.RESULTS.GRANTED;
+      setPhonePermission(granted);
+
+      if (!granted) {
+        Alert.alert(
+          'Permission Required',
+          'Phone permission is needed to place direct calls.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Open Settings', onPress: () => Linking.openSettings() },
+          ]
+        );
+        return;
+      }
+
+      Alert.alert('Success', 'Phone permission granted');
+    } catch (error) {
+      console.error('Error requesting phone permission:', error);
+      Alert.alert('Error', 'Failed to request phone permission.');
+    }
+  };
+
+  const callSupport = async () => {
+    if (Platform.OS === 'android' && !phonePermission) {
+      await requestPhonePermission();
+      return;
+    }
+
+    const url = 'tel:+15551234567';
+    try {
+      const supported = await Linking.canOpenURL(url);
+      if (!supported) {
+        Alert.alert('Not Supported', 'This device cannot open the phone dialer.');
+        return;
+      }
+      await Linking.openURL(url);
+    } catch (error) {
+      console.error('Error opening dialer:', error);
+      Alert.alert('Error', 'Failed to open the phone dialer.');
     }
   };
 
@@ -349,6 +421,49 @@ export default function SettingsScreen() {
                 {mediaPermission ? 'Granted' : 'Not Granted'}
               </Text>
             </View>
+          </TouchableOpacity>
+        </View>
+
+        {/* Phone Section */}
+        <Text style={styles.sectionTitle}>Phone</Text>
+        <View style={styles.card}>
+          <TouchableOpacity style={styles.settingRow} onPress={requestPhonePermission}>
+            <View style={styles.settingLeft}>
+              <View style={[styles.iconContainer, { backgroundColor: '#22c55e' + '20' }]}>
+                <Ionicons name="call" size={20} color="#22c55e" />
+              </View>
+              <View style={styles.settingInfo}>
+                <Text style={styles.settingText}>Phone Access</Text>
+                <Text style={styles.settingDescription}>
+                  Allow direct calls from the app
+                </Text>
+              </View>
+            </View>
+            <View style={styles.statusBadge}>
+              <Text style={[
+                styles.statusText,
+                { color: phonePermission ? '#22c55e' : '#f59e0b' }
+              ]}>
+                {phonePermission ? 'Granted' : 'Not Granted'}
+              </Text>
+            </View>
+          </TouchableOpacity>
+
+          <View style={styles.divider} />
+
+          <TouchableOpacity style={styles.settingRow} onPress={callSupport}>
+            <View style={styles.settingLeft}>
+              <View style={[styles.iconContainer, { backgroundColor: '#2563eb' + '20' }]}>
+                <Ionicons name="call-outline" size={20} color="#2563eb" />
+              </View>
+              <View style={styles.settingInfo}>
+                <Text style={styles.settingText}>Test Call</Text>
+                <Text style={styles.settingDescription}>
+                  Open dialer and call support
+                </Text>
+              </View>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color="#64748b" />
           </TouchableOpacity>
         </View>
 
