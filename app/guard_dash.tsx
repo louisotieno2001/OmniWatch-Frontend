@@ -18,6 +18,7 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
+import * as TaskManager from 'expo-task-manager';
 import { MapView, Marker, Polyline } from '../components/MapView';
 import Constants from 'expo-constants';
 import { getUserSession, clearUserSession } from './services/auth.storage';
@@ -91,6 +92,11 @@ interface PatrolData {
 // Map update interval in milliseconds (30 seconds)
 const MAP_UPDATE_INTERVAL = 30000;
 const ACTIVE_PATROL_STATUSES: PatrolLifecycleStatus[] = ['active_on_patrol', 'logged_out_on_patrol', 'active'];
+const BACKGROUND_LOCATION_TASK = 'omniwatch-background-patrol-location';
+const BACKGROUND_LOCATION_BUFFER_KEY = 'ongoingPatrolBackgroundPoints';
+const BACKGROUND_LAST_SENT_AT_KEY = 'ongoingPatrolBackgroundLastSentAt';
+const ONGOING_PATROL_STORAGE_KEY = 'ongoingPatrol';
+const TOKEN_STORAGE_KEY = 'user_token';
 
 // Log entry interface
 interface LogEntry {
@@ -120,6 +126,152 @@ const TIME_SLOTS = [
   '12:00', '13:00', '14:00', '15:00', '16:00', '17:00',
   '18:00', '19:00', '20:00', '21:00', '22:00', '23:00',
 ];
+
+type PatrolCoordinate = { latitude: number; longitude: number; timestamp: number };
+
+const readBufferedCoordinates = async (): Promise<PatrolCoordinate[]> => {
+  try {
+    const raw = await AsyncStorage.getItem(BACKGROUND_LOCATION_BUFFER_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    console.error('Error reading buffered background coordinates:', error);
+    return [];
+  }
+};
+
+const flushBufferedCoordinatesToServer = async (explicitPatrolId?: string): Promise<boolean> => {
+  try {
+    const coordinates = await readBufferedCoordinates();
+    if (coordinates.length === 0) {
+      return true;
+    }
+
+    const token = await AsyncStorage.getItem(TOKEN_STORAGE_KEY);
+    if (!token) {
+      return false;
+    }
+
+    let patrolId = explicitPatrolId || null;
+    if (!patrolId) {
+      const patrolRaw = await AsyncStorage.getItem(ONGOING_PATROL_STORAGE_KEY);
+      if (!patrolRaw) {
+        return false;
+      }
+      const patrol = JSON.parse(patrolRaw);
+      patrolId = patrol?.patrolId || null;
+    }
+
+    if (!patrolId) {
+      return false;
+    }
+
+    const response = await fetch(`${API_URL}/patrols/${patrolId}/location`, {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        location_data: coordinates,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error('Failed to flush buffered background coordinates:', response.status);
+      return false;
+    }
+
+    await AsyncStorage.removeItem(BACKGROUND_LOCATION_BUFFER_KEY);
+    await AsyncStorage.setItem(BACKGROUND_LAST_SENT_AT_KEY, Date.now().toString());
+    return true;
+  } catch (error) {
+    console.error('Error flushing buffered background coordinates:', error);
+    return false;
+  }
+};
+
+if (!TaskManager.isTaskDefined(BACKGROUND_LOCATION_TASK)) {
+  TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
+    if (error) {
+      console.error('Background location task error:', error);
+      return;
+    }
+
+    const locations = (data as { locations?: Location.LocationObject[] })?.locations || [];
+    if (locations.length === 0) {
+      return;
+    }
+
+    const newCoordinates: PatrolCoordinate[] = locations.map((location) => ({
+      latitude: location.coords.latitude,
+      longitude: location.coords.longitude,
+      timestamp: location.timestamp || Date.now(),
+    }));
+
+    const existing = await readBufferedCoordinates();
+    await AsyncStorage.setItem(
+      BACKGROUND_LOCATION_BUFFER_KEY,
+      JSON.stringify([...existing, ...newCoordinates])
+    );
+
+    const lastSentRaw = await AsyncStorage.getItem(BACKGROUND_LAST_SENT_AT_KEY);
+    const lastSent = Number(lastSentRaw || '0');
+    if (Date.now() - lastSent >= MAP_UPDATE_INTERVAL) {
+      await flushBufferedCoordinatesToServer();
+    }
+  });
+}
+
+const startBackgroundLocationTracking = async (): Promise<boolean> => {
+  try {
+    const foreground = await Location.requestForegroundPermissionsAsync();
+    if (foreground.status !== 'granted') {
+      return false;
+    }
+
+    const background = await Location.requestBackgroundPermissionsAsync();
+    if (background.status !== 'granted') {
+      return false;
+    }
+
+    const alreadyStarted = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+    if (alreadyStarted) {
+      return true;
+    }
+
+    await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
+      accuracy: Location.Accuracy.High,
+      timeInterval: MAP_UPDATE_INTERVAL,
+      distanceInterval: 10,
+      deferredUpdatesInterval: MAP_UPDATE_INTERVAL,
+      pausesUpdatesAutomatically: false,
+      showsBackgroundLocationIndicator: true,
+      foregroundService: {
+        notificationTitle: 'OmniWatch patrol is active',
+        notificationBody: 'Location tracking continues in background during patrol.',
+      },
+    });
+
+    return true;
+  } catch (error) {
+    console.error('Error starting background location tracking:', error);
+    return false;
+  }
+};
+
+const stopBackgroundLocationTracking = async (explicitPatrolId?: string): Promise<void> => {
+  try {
+    await flushBufferedCoordinatesToServer(explicitPatrolId);
+    const started = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+    if (started) {
+      await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+    }
+  } catch (error) {
+    console.error('Error stopping background location tracking:', error);
+  }
+};
 
 export default function GuardDashboard() {
 const router = useRouter();
@@ -265,7 +417,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
   // Load persistent patrol data from AsyncStorage
   const loadPersistentPatrolData = useCallback(async (sessionUser?: UserData) => {
     try {
-      const patrolData = await AsyncStorage.getItem('ongoingPatrol');
+      const patrolData = await AsyncStorage.getItem(ONGOING_PATROL_STORAGE_KEY);
       if (patrolData) {
         const parsed = JSON.parse(patrolData);
         const parsedStartTime = parsed.startTime ? new Date(parsed.startTime) : null;
@@ -277,6 +429,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
         setRecordingStatus('Patrol resumed from previous session');
 
         // Resume location tracking
+        await startBackgroundLocationTracking();
         startLocationTracking();
         return;
       }
@@ -296,7 +449,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
         );
 
         await AsyncStorage.setItem(
-          'ongoingPatrol',
+          ONGOING_PATROL_STORAGE_KEY,
           JSON.stringify({
             patrolId: serverPatrol.id,
             startTime: serverPatrol.start_time,
@@ -304,6 +457,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
           })
         );
 
+        await startBackgroundLocationTracking();
         startLocationTracking();
       }
     } catch (error) {
@@ -717,6 +871,8 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
 
   // Send periodic location update to server
   const sendPeriodicLocationUpdate = useCallback(async () => {
+    await flushBufferedCoordinatesToServer(patrolId || undefined);
+
     if (!patrolId || locationData.length === 0) {
       return;
     }
@@ -791,6 +947,8 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
     }
 
     try {
+      await stopBackgroundLocationTracking(patrolId || undefined);
+
       const { token } = await getUserSession();
       if (token) {
         const response = await fetch(`${API_URL}/logout`, {
@@ -815,7 +973,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
       await clearUserSession();
       
       // Clear persistent patrol data
-      await AsyncStorage.removeItem('ongoingPatrol');
+      await AsyncStorage.removeItem(ONGOING_PATROL_STORAGE_KEY);
       
       // Navigate to login
       router.replace('/login');
@@ -885,6 +1043,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
               try {
                 // Stop location tracking
                 stopLocationTracking();
+                await stopBackgroundLocationTracking(patrolId || undefined);
                 const finalDuration = getElapsedSeconds(startTime);
 
                 // Update patrol record in Directus
@@ -930,7 +1089,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
                   }
 
                   // Clear persistent patrol data
-                  await AsyncStorage.removeItem('ongoingPatrol');
+                  await AsyncStorage.removeItem(ONGOING_PATROL_STORAGE_KEY);
                 }
 
                 setIsRecording(false);
@@ -987,7 +1146,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
           setStartTime(startDate);
 
           // Persist patrol data to AsyncStorage
-          await AsyncStorage.setItem('ongoingPatrol', JSON.stringify({
+          await AsyncStorage.setItem(ONGOING_PATROL_STORAGE_KEY, JSON.stringify({
             patrolId: newPatrolId,
             startTime: now,
             locationData: [],
@@ -1000,6 +1159,13 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
         setTimeout(() => setRecordingStatus(''), 3000);
 
         // Start location tracking
+        const backgroundStarted = await startBackgroundLocationTracking();
+        if (!backgroundStarted) {
+          Alert.alert(
+            'Background Tracking Disabled',
+            'Background location permission was not granted. Coordinates will only sync while the app is open.'
+          );
+        }
         startLocationTracking();
       } catch (error) {
         console.error('Error starting patrol:', error);
