@@ -1,3 +1,3 @@
-import MapView, { Marker, Polyline, MapViewProps, MarkerProps, PolylineProps } from 'react-native-maps';
+import MapView, { Marker, Polyline, MapViewProps, MapMarkerProps, MapPolylineProps } from 'react-native-maps';
 
-export { MapView, Marker, Polyline, MapViewProps, MarkerProps, PolylineProps };
+export { MapView, Marker, Polyline, MapViewProps, MapMarkerProps, MapPolylineProps };

@@ -95,8 +95,15 @@ const ACTIVE_PATROL_STATUSES: PatrolLifecycleStatus[] = ['active_on_patrol', 'lo
 const BACKGROUND_LOCATION_TASK = 'omniwatch-background-patrol-location';
 const BACKGROUND_LOCATION_BUFFER_KEY = 'ongoingPatrolBackgroundPoints';
 const BACKGROUND_LAST_SENT_AT_KEY = 'ongoingPatrolBackgroundLastSentAt';
+const BACKGROUND_LOCATION_FILTER_STATE_KEY = 'ongoingPatrolBackgroundFilterState';
 const ONGOING_PATROL_STORAGE_KEY = 'ongoingPatrol';
 const TOKEN_STORAGE_KEY = 'user_token';
+const MAX_ACCEPTABLE_ACCURACY_METERS = 20;
+const STATIONARY_RADIUS_METERS = 8;
+const MIN_CONFIRMED_MOVEMENT_METERS = 10;
+const REQUIRED_CONSECUTIVE_MOVEMENT_POINTS = 1;
+const MAX_STATIONARY_SPEED_MPS = 0.8;
+const MAX_REASONABLE_SPEED_MPS = 6;
 
 // Log entry interface
 interface LogEntry {
@@ -128,6 +135,122 @@ const TIME_SLOTS = [
 ];
 
 type PatrolCoordinate = { latitude: number; longitude: number; timestamp: number };
+type LocationSample = PatrolCoordinate & { accuracy: number | null; speed: number | null };
+type LocationFilterDecision = { shouldAccept: boolean; nextConsecutiveMovement: number };
+type PersistedBackgroundFilterState = {
+  lastAccepted: PatrolCoordinate | null;
+  consecutiveMovement: number;
+};
+
+const toFiniteNumber = (value: unknown): number | null => {
+  const numeric = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
+const toPatrolCoordinate = (sample: LocationSample): PatrolCoordinate => ({
+  latitude: sample.latitude,
+  longitude: sample.longitude,
+  timestamp: sample.timestamp,
+});
+
+const toLocationSample = (location: Location.LocationObject): LocationSample => ({
+  latitude: location.coords.latitude,
+  longitude: location.coords.longitude,
+  timestamp: location.timestamp || Date.now(),
+  accuracy: toFiniteNumber(location.coords.accuracy),
+  speed: toFiniteNumber(location.coords.speed),
+});
+
+const distanceBetweenCoordinatesMeters = (a: PatrolCoordinate, b: PatrolCoordinate): number => {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const earthRadius = 6371000;
+  const lat1 = toRad(a.latitude);
+  const lat2 = toRad(b.latitude);
+  const deltaLat = toRad(b.latitude - a.latitude);
+  const deltaLon = toRad(b.longitude - a.longitude);
+
+  const haversine =
+    Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLon / 2) * Math.sin(deltaLon / 2);
+  const arc = 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
+  return earthRadius * arc;
+};
+
+const shouldAcceptLocationSample = (
+  sample: LocationSample,
+  lastAccepted: PatrolCoordinate | null,
+  consecutiveMovement: number
+): LocationFilterDecision => {
+  if (sample.accuracy !== null && sample.accuracy > MAX_ACCEPTABLE_ACCURACY_METERS) {
+    return { shouldAccept: false, nextConsecutiveMovement: 0 };
+  }
+
+  if (!lastAccepted) {
+    return { shouldAccept: true, nextConsecutiveMovement: 0 };
+  }
+
+  const displacement = distanceBetweenCoordinatesMeters(lastAccepted, sample);
+  if (
+    displacement <= STATIONARY_RADIUS_METERS &&
+    (sample.speed === null || sample.speed <= MAX_STATIONARY_SPEED_MPS)
+  ) {
+    return { shouldAccept: false, nextConsecutiveMovement: 0 };
+  }
+
+  const elapsedSeconds = (sample.timestamp - lastAccepted.timestamp) / 1000;
+  if (elapsedSeconds > 0) {
+    const derivedSpeed = displacement / elapsedSeconds;
+    if (derivedSpeed > MAX_REASONABLE_SPEED_MPS) {
+      return { shouldAccept: false, nextConsecutiveMovement: 0 };
+    }
+  }
+
+  if (displacement < MIN_CONFIRMED_MOVEMENT_METERS) {
+    return { shouldAccept: false, nextConsecutiveMovement: 0 };
+  }
+
+  const nextConsecutiveMovement = consecutiveMovement + 1;
+  if (nextConsecutiveMovement < REQUIRED_CONSECUTIVE_MOVEMENT_POINTS) {
+    return { shouldAccept: false, nextConsecutiveMovement };
+  }
+
+  return { shouldAccept: true, nextConsecutiveMovement: 0 };
+};
+
+const readBackgroundFilterState = async (): Promise<PersistedBackgroundFilterState> => {
+  try {
+    const raw = await AsyncStorage.getItem(BACKGROUND_LOCATION_FILTER_STATE_KEY);
+    if (!raw) {
+      return { lastAccepted: null, consecutiveMovement: 0 };
+    }
+
+    const parsed = JSON.parse(raw);
+    return {
+      lastAccepted:
+        parsed?.lastAccepted &&
+        typeof parsed.lastAccepted.latitude === 'number' &&
+        typeof parsed.lastAccepted.longitude === 'number' &&
+        typeof parsed.lastAccepted.timestamp === 'number'
+          ? parsed.lastAccepted
+          : null,
+      consecutiveMovement:
+        typeof parsed?.consecutiveMovement === 'number' && Number.isFinite(parsed.consecutiveMovement)
+          ? parsed.consecutiveMovement
+          : 0,
+    };
+  } catch (error) {
+    console.error('Error reading background location filter state:', error);
+    return { lastAccepted: null, consecutiveMovement: 0 };
+  }
+};
+
+const writeBackgroundFilterState = async (state: PersistedBackgroundFilterState): Promise<void> => {
+  try {
+    await AsyncStorage.setItem(BACKGROUND_LOCATION_FILTER_STATE_KEY, JSON.stringify(state));
+  } catch (error) {
+    console.error('Error writing background location filter state:', error);
+  }
+};
 
 const readBufferedCoordinates = async (): Promise<PatrolCoordinate[]> => {
   try {
@@ -204,17 +327,32 @@ if (!TaskManager.isTaskDefined(BACKGROUND_LOCATION_TASK)) {
       return;
     }
 
-    const newCoordinates: PatrolCoordinate[] = locations.map((location) => ({
-      latitude: location.coords.latitude,
-      longitude: location.coords.longitude,
-      timestamp: location.timestamp || Date.now(),
-    }));
-
     const existing = await readBufferedCoordinates();
+    const filterState = await readBackgroundFilterState();
+    const acceptedCoordinates: PatrolCoordinate[] = [...existing];
+    let lastAccepted = filterState.lastAccepted;
+    let consecutiveMovement = filterState.consecutiveMovement;
+
+    for (const location of locations) {
+      const sample = toLocationSample(location);
+      const decision = shouldAcceptLocationSample(sample, lastAccepted, consecutiveMovement);
+      consecutiveMovement = decision.nextConsecutiveMovement;
+
+      if (!decision.shouldAccept) {
+        continue;
+      }
+
+      const accepted = toPatrolCoordinate(sample);
+      acceptedCoordinates.push(accepted);
+      lastAccepted = accepted;
+      consecutiveMovement = 0;
+    }
+
     await AsyncStorage.setItem(
       BACKGROUND_LOCATION_BUFFER_KEY,
-      JSON.stringify([...existing, ...newCoordinates])
+      JSON.stringify(acceptedCoordinates)
     );
+    await writeBackgroundFilterState({ lastAccepted, consecutiveMovement });
 
     const lastSentRaw = await AsyncStorage.getItem(BACKGROUND_LAST_SENT_AT_KEY);
     const lastSent = Number(lastSentRaw || '0');
@@ -270,6 +408,8 @@ const stopBackgroundLocationTracking = async (explicitPatrolId?: string): Promis
     }
   } catch (error) {
     console.error('Error stopping background location tracking:', error);
+  } finally {
+    await AsyncStorage.removeItem(BACKGROUND_LOCATION_FILTER_STATE_KEY);
   }
 };
 
@@ -317,6 +457,8 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
   const [locationData, setLocationData] = useState<{latitude: number, longitude: number, timestamp: number}[]>([]);
   const [currentLocation, setCurrentLocation] = useState<{latitude: number, longitude: number} | null>(null);
   const locationSubscription = useRef<Location.LocationSubscription | null>(null);
+  const lastAcceptedForegroundPointRef = useRef<PatrolCoordinate | null>(null);
+  const consecutiveForegroundMovementRef = useRef(0);
 
   const getElapsedSeconds = useCallback((startedAt: Date | null) => {
     if (!startedAt) return 0;
@@ -331,6 +473,40 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
     if (!status) return false;
     return ACTIVE_PATROL_STATUSES.includes(status);
   }, []);
+
+  const ensureForegroundPermission = useCallback(async () => {
+    const existingPermission = await Location.getForegroundPermissionsAsync();
+    if (existingPermission.status === 'granted') {
+      return true;
+    }
+
+    const requestedPermission = await Location.requestForegroundPermissionsAsync();
+    return requestedPermission.status === 'granted';
+  }, []);
+
+  const seedCurrentLocation = useCallback(async (setAsTrackingAnchor: boolean) => {
+    try {
+      const permissionGranted = await ensureForegroundPermission();
+      if (!permissionGranted) {
+        return false;
+      }
+
+      const location = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+      });
+      const sample = toLocationSample(location);
+      setCurrentLocation({ latitude: sample.latitude, longitude: sample.longitude });
+
+      if (setAsTrackingAnchor) {
+        lastAcceptedForegroundPointRef.current = toPatrolCoordinate(sample);
+      }
+
+      return true;
+    } catch (error) {
+      console.error('Error seeding current location:', error);
+      return false;
+    }
+  }, [ensureForegroundPermission]);
   
   // Guard Profile State - initialize with empty values
   const [guardProfile, setGuardProfile] = useState<GuardProfile>({
@@ -384,13 +560,35 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
     loadDarkModePreference();
   }, []);
 
+  useEffect(() => {
+    const lastPoint = locationData[locationData.length - 1] || null;
+    lastAcceptedForegroundPointRef.current = lastPoint;
+    if (!lastPoint) {
+      consecutiveForegroundMovementRef.current = 0;
+    }
+  }, [locationData]);
+
+  useEffect(() => {
+    if (!currentLocation) {
+      seedCurrentLocation(false);
+    }
+  }, [currentLocation, seedCurrentLocation]);
+
    // Start location tracking
   const startLocationTracking = useCallback(async () => {
     try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
+      if (locationSubscription.current) {
+        return;
+      }
+
+      const permissionGranted = await ensureForegroundPermission();
+      if (!permissionGranted) {
         Alert.alert('Permission Denied', 'Location permission is required for patrol tracking.');
         return;
+      }
+
+      if (!lastAcceptedForegroundPointRef.current) {
+        await seedCurrentLocation(true);
       }
 
       locationSubscription.current = await Location.watchPositionAsync(
@@ -400,19 +598,29 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
           distanceInterval: 10, // Update every 10 meters
         },
         (location) => {
-          const newLocation = {
-            latitude: location.coords.latitude,
-            longitude: location.coords.longitude,
-            timestamp: Date.now(),
-          };
-          setCurrentLocation({ latitude: newLocation.latitude, longitude: newLocation.longitude });
-          setLocationData(prev => [...prev, newLocation]);
+          const sample = toLocationSample(location);
+          const decision = shouldAcceptLocationSample(
+            sample,
+            lastAcceptedForegroundPointRef.current,
+            consecutiveForegroundMovementRef.current
+          );
+          consecutiveForegroundMovementRef.current = decision.nextConsecutiveMovement;
+
+          if (!decision.shouldAccept) {
+            return;
+          }
+
+          const accepted = toPatrolCoordinate(sample);
+          lastAcceptedForegroundPointRef.current = accepted;
+          consecutiveForegroundMovementRef.current = 0;
+          setCurrentLocation({ latitude: accepted.latitude, longitude: accepted.longitude });
+          setLocationData(prev => [...prev, accepted]);
         }
       );
     } catch (error) {
       console.error('Error starting location tracking:', error);
     }
-  }, []);
+  }, [ensureForegroundPermission, seedCurrentLocation]);
 
   // Load persistent patrol data from AsyncStorage
   const loadPersistentPatrolData = useCallback(async (sessionUser?: UserData) => {
@@ -421,11 +629,20 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
       if (patrolData) {
         const parsed = JSON.parse(patrolData);
         const parsedStartTime = parsed.startTime ? new Date(parsed.startTime) : null;
+        const restoredPoints = Array.isArray(parsed.locationData) ? parsed.locationData : [];
+        const restoredLastPoint = restoredPoints[restoredPoints.length - 1] || null;
         setIsRecording(true);
         setPatrolId(parsed.patrolId);
         setStartTime(parsedStartTime);
         setRecordingTime(getElapsedSeconds(parsedStartTime));
-        setLocationData(parsed.locationData || []);
+        setLocationData(restoredPoints);
+        setCurrentLocation(
+          restoredLastPoint
+            ? { latitude: restoredLastPoint.latitude, longitude: restoredLastPoint.longitude }
+            : null
+        );
+        lastAcceptedForegroundPointRef.current = restoredLastPoint;
+        consecutiveForegroundMovementRef.current = 0;
         setRecordingStatus('Patrol resumed from previous session');
 
         // Resume location tracking
@@ -442,6 +659,10 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
         setPatrolId(serverPatrol.id);
         setStartTime(patrolStart);
         setRecordingTime(getElapsedSeconds(patrolStart));
+        setLocationData([]);
+        setCurrentLocation(null);
+        lastAcceptedForegroundPointRef.current = null;
+        consecutiveForegroundMovementRef.current = 0;
         setRecordingStatus(
           sessionUser?.patrol_status === 'logged_out_on_patrol'
             ? 'Patrol is still ongoing. You were logged out during patrol and tracking has resumed.'
@@ -867,6 +1088,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
       locationSubscription.current.remove();
       locationSubscription.current = null;
     }
+    consecutiveForegroundMovementRef.current = 0;
   };
 
   // Send periodic location update to server
@@ -1097,6 +1319,8 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
                 setStartTime(null);
                 setLocationData([]);
                 setCurrentLocation(null);
+                lastAcceptedForegroundPointRef.current = null;
+                consecutiveForegroundMovementRef.current = 0;
                 setRecordingStatus('Patrol completed successfully');
                 setRecordingTime(0);
                 
@@ -1155,8 +1379,18 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
 
         setIsRecording(true);
         setRecordingTime(0);
+        setLocationData([]);
+        setCurrentLocation(null);
+        lastAcceptedForegroundPointRef.current = null;
+        consecutiveForegroundMovementRef.current = 0;
         setRecordingStatus('Patrol recording started');
         setTimeout(() => setRecordingStatus(''), 3000);
+
+        await AsyncStorage.multiRemove([
+          BACKGROUND_LOCATION_BUFFER_KEY,
+          BACKGROUND_LAST_SENT_AT_KEY,
+          BACKGROUND_LOCATION_FILTER_STATE_KEY,
+        ]);
 
         // Start location tracking
         const backgroundStarted = await startBackgroundLocationTracking();
