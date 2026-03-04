@@ -52,7 +52,7 @@
       "eas": {
         "projectId": "75e426ae-f166-4810-9abf-4b668bffbe3d"
       },
-      "apiUrl": "http://10.22.134.22:5000/api"
+      "apiUrl": "http://10.154.7.98:5000/api"
     }
   }
 }

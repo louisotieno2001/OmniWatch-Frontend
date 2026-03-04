@@ -63,7 +63,16 @@ interface UserData {
   role: string;
   invite_code: string;
   assignments?: Assignment[];
+  patrol_status?: PatrolLifecycleStatus;
+  ongoing_patrol?: PatrolData | null;
 }
+
+type PatrolLifecycleStatus =
+  | 'active_on_patrol'
+  | 'inactive_patrol_not_started'
+  | 'logged_out_on_patrol'
+  | 'active'
+  | 'completed';
 
 // Patrol data from API
 interface PatrolData {
@@ -74,13 +83,14 @@ interface PatrolData {
   user_id: string;
   organization_id?: string;
   map?: string;
-  status: 'active' | 'completed';
+  status: PatrolLifecycleStatus;
   date_created: string;
   date_updated: string;
 }
 
 // Map update interval in milliseconds (30 seconds)
 const MAP_UPDATE_INTERVAL = 30000;
+const ACTIVE_PATROL_STATUSES: PatrolLifecycleStatus[] = ['active_on_patrol', 'logged_out_on_patrol', 'active'];
 
 // Log entry interface
 interface LogEntry {
@@ -162,6 +172,12 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
     if (Number.isNaN(startMs)) return 0;
     const elapsedMs = Date.now() - startMs;
     return Math.max(0, Math.floor(elapsedMs / 1000));
+  };
+
+  const isPatrolOngoing = (status?: PatrolLifecycleStatus, endTime?: string) => {
+    if (endTime) return false;
+    if (!status) return false;
+    return ACTIVE_PATROL_STATUSES.includes(status);
   };
   
   // Guard Profile State - initialize with empty values
@@ -314,7 +330,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
       setEditableProfile(initialProfile);
 
       // Load persistent patrol data after session is loaded
-      await loadPersistentPatrolData();
+      await loadPersistentPatrolData(storedUserData);
       
       // Fetch patrol history
       await fetchPatrolHistory();
@@ -417,7 +433,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
   };
 
   // Load persistent patrol data from AsyncStorage
-  const loadPersistentPatrolData = async () => {
+  const loadPersistentPatrolData = async (sessionUser?: UserData) => {
     try {
       const patrolData = await AsyncStorage.getItem('ongoingPatrol');
       if (patrolData) {
@@ -431,6 +447,33 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
         setRecordingStatus('Patrol resumed from previous session');
 
         // Resume location tracking
+        startLocationTracking();
+        return;
+      }
+
+      const serverPatrol = sessionUser?.ongoing_patrol;
+      if (serverPatrol && isPatrolOngoing(serverPatrol.status, serverPatrol.end_time)) {
+        const patrolStart = serverPatrol.start_time ? new Date(serverPatrol.start_time) : null;
+
+        setIsRecording(true);
+        setPatrolId(serverPatrol.id);
+        setStartTime(patrolStart);
+        setRecordingTime(getElapsedSeconds(patrolStart));
+        setRecordingStatus(
+          sessionUser?.patrol_status === 'logged_out_on_patrol'
+            ? 'Patrol is still ongoing. You were logged out during patrol and tracking has resumed.'
+            : 'Patrol resumed from server state'
+        );
+
+        await AsyncStorage.setItem(
+          'ongoingPatrol',
+          JSON.stringify({
+            patrolId: serverPatrol.id,
+            startTime: serverPatrol.start_time,
+            locationData: [],
+          })
+        );
+
         startLocationTracking();
       }
     } catch (error) {
@@ -743,7 +786,33 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
   const performLogout = async () => {
     console.log('Starting logout process...');
     setLogoutModalVisible(false);
+
+    if (isRecording || patrolId) {
+      Alert.alert('Patrol Ongoing', 'You cannot logout while on patrol. End the patrol first.');
+      return;
+    }
+
     try {
+      const { token } = await getUserSession();
+      if (token) {
+        const response = await fetch(`${API_URL}/logout`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+        });
+
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null);
+          if (response.status === 409 || payload?.code === 'ACTIVE_PATROL_LOGOUT_BLOCKED') {
+            Alert.alert('Patrol Ongoing', payload?.message || 'End the active patrol before logout.');
+            return;
+          }
+          throw new Error(payload?.message || `Logout failed (${response.status})`);
+        }
+      }
+
       // Clear user session
       await clearUserSession();
       console.log('Session cleared successfully');
@@ -1150,7 +1219,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
               const hrs = Math.floor(diffMins / 60);
               const mins = diffMins % 60;
               duration = `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
-            } else if (patrol.start_time && patrol.status === 'active') {
+            } else if (patrol.start_time && isPatrolOngoing(patrol.status, patrol.end_time)) {
               duration = 'In Progress';
             }
 
@@ -1180,7 +1249,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
                 <View style={styles.historyDuration}>
                   <Text style={styles.historyDurationText}>{duration}</Text>
                   <Text style={styles.historyLabel}>
-                    {patrol.status === 'active' ? 'Active' : 'Duration'}
+                    {isPatrolOngoing(patrol.status, patrol.end_time) ? 'Active' : 'Duration'}
                   </Text>
                 </View>
               </View>

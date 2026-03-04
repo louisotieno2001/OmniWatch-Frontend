@@ -238,6 +238,8 @@ export default function AdminDashboard() {
             lastSeen:
               guard.last_seen_display === 'Online (Currently on patrol)'
                 ? 'Online (Currently on patrol)'
+                : guard.last_seen_display === 'Logged out (Patrol ongoing)'
+                  ? 'Logged out (Patrol ongoing)'
                 : guard.last_seen
                   ? new Date(guard.last_seen).toLocaleString()
                   : guard.last_access
@@ -294,7 +296,14 @@ export default function AdminDashboard() {
                 : typeof patrol.assigned_areas === 'string'
                   ? patrol.assigned_areas.split(',').map((c: string) => c.trim()).filter(Boolean)
                   : [],
-            status: patrol.status === 'completed' ? 'completed' : patrol.status === 'active' ? 'in-progress' : 'missed',
+            status:
+              patrol.status === 'completed' || patrol.status === 'inactive_patrol_not_started'
+                ? 'completed'
+                : patrol.status === 'active' ||
+                    patrol.status === 'active_on_patrol' ||
+                    patrol.status === 'logged_out_on_patrol'
+                  ? 'in-progress'
+                  : 'missed',
             notes: patrol.notes || '',
           }));
           

@@ -1,6 +1,6 @@
 import Constants from 'expo-constants';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -12,6 +12,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import CustomToast, { type ToastType } from '@/components/CustomToast';
 import { getUserSession } from './services/auth.storage';
 
 const API_URL = Constants.expoConfig?.extra?.apiUrl;
@@ -35,6 +36,12 @@ export default function NewAssignmentScreen() {
   const [endTime, setEndTime] = useState('17:00');
   const [loadingLocations, setLoadingLocations] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [toast, setToast] = useState<{ visible: boolean; message: string; type: ToastType }>({
+    visible: false,
+    message: '',
+    type: 'success',
+  });
+  const redirectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const selectedLocation = useMemo(
     () => locations.find((location) => location.id === selectedLocationId) || null,
@@ -84,6 +91,19 @@ export default function NewAssignmentScreen() {
     loadLocations();
   }, [router]);
 
+  useEffect(
+    () => () => {
+      if (redirectTimeoutRef.current) {
+        clearTimeout(redirectTimeoutRef.current);
+      }
+    },
+    []
+  );
+
+  const showToast = (message: string, type: ToastType) => {
+    setToast({ visible: true, message, type });
+  };
+
   const selectLocation = (location: LocationData) => {
     setSelectedLocationId(location.id);
     if (!assignedAreas.trim()) {
@@ -93,19 +113,19 @@ export default function NewAssignmentScreen() {
 
   const handleCreateAssignment = async () => {
     if (!guardId) {
-      Alert.alert('Missing Guard', 'No guard selected for this assignment.');
+      showToast('No guard selected for this assignment.', 'error');
       return;
     }
     if (!selectedLocationId) {
-      Alert.alert('Validation Error', 'Please select a location.');
+      showToast('Please select a location.', 'error');
       return;
     }
     if (!assignedAreas.trim()) {
-      Alert.alert('Validation Error', 'Assigned areas are required.');
+      showToast('Assigned areas are required.', 'error');
       return;
     }
     if (!startTime.trim() || !endTime.trim()) {
-      Alert.alert('Validation Error', 'Start and end time are required.');
+      showToast('Start and end time are required.', 'error');
       return;
     }
 
@@ -113,9 +133,8 @@ export default function NewAssignmentScreen() {
       setSubmitting(true);
       const { token } = await getUserSession();
       if (!token) {
-        Alert.alert('Session Expired', 'Please login again.', [
-          { text: 'OK', onPress: () => router.replace('/login') },
-        ]);
+        showToast('Session expired. Please login again.', 'error');
+        redirectTimeoutRef.current = setTimeout(() => router.replace('/login'), 1200);
         return;
       }
 
@@ -139,11 +158,10 @@ export default function NewAssignmentScreen() {
         throw new Error(message || 'Failed to create assignment');
       }
 
-      Alert.alert('Success', 'Assignment created successfully.', [
-        { text: 'OK', onPress: () => router.replace('/manage_guards') },
-      ]);
+      showToast('Assignment created successfully.', 'success');
+      redirectTimeoutRef.current = setTimeout(() => router.replace('/manage_guards'), 1200);
     } catch (error: any) {
-      Alert.alert('Assignment Failed', error?.message || 'Failed to create assignment.');
+      showToast(error?.message || 'Failed to create assignment.', 'error');
     } finally {
       setSubmitting(false);
     }
@@ -151,103 +169,111 @@ export default function NewAssignmentScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.content}>
-        <Text style={styles.title}>New Assignment</Text>
-        <Text style={styles.subtitle}>Assign a location to a guard</Text>
+      <View style={styles.page}>
+        <ScrollView contentContainerStyle={styles.content}>
+          <Text style={styles.title}>New Assignment</Text>
+          <Text style={styles.subtitle}>Assign a location to a guard</Text>
 
-        <View style={styles.card}>
-          <Text style={styles.label}>Guard</Text>
-          <Text style={styles.value}>{guardName}</Text>
-        </View>
-
-        <Text style={styles.sectionTitle}>Select Location</Text>
-        {loadingLocations ? (
-          <View style={styles.loaderWrap}>
-            <ActivityIndicator size="large" color="#2563eb" />
-          </View>
-        ) : locations.length === 0 ? (
           <View style={styles.card}>
-            <Text style={styles.emptyText}>No locations found. Add a location first.</Text>
-            <TouchableOpacity style={styles.secondaryBtn} onPress={() => router.push('/add_locations')}>
-              <Text style={styles.secondaryBtnText}>Add Location</Text>
+            <Text style={styles.label}>Guard</Text>
+            <Text style={styles.value}>{guardName}</Text>
+          </View>
+
+          <Text style={styles.sectionTitle}>Select Location</Text>
+          {loadingLocations ? (
+            <View style={styles.loaderWrap}>
+              <ActivityIndicator size="large" color="#2563eb" />
+            </View>
+          ) : locations.length === 0 ? (
+            <View style={styles.card}>
+              <Text style={styles.emptyText}>No locations found. Add a location first.</Text>
+              <TouchableOpacity style={styles.secondaryBtn} onPress={() => router.push('/add_locations')}>
+                <Text style={styles.secondaryBtnText}>Add Location</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={styles.locationList}>
+              {locations.map((location) => (
+                <TouchableOpacity
+                  key={location.id}
+                  style={[
+                    styles.locationItem,
+                    selectedLocationId === location.id && styles.locationItemSelected,
+                  ]}
+                  onPress={() => selectLocation(location)}
+                >
+                  <Text
+                    style={[
+                      styles.locationName,
+                      selectedLocationId === location.id && styles.locationNameSelected,
+                    ]}
+                  >
+                    {location.name}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+
+          <View style={styles.card}>
+            <Text style={styles.label}>Assigned Areas</Text>
+            <TextInput
+              style={[styles.input, styles.multiline]}
+              value={assignedAreas}
+              onChangeText={setAssignedAreas}
+              placeholder={selectedLocation?.assigned_areas || 'Comma-separated areas'}
+              placeholderTextColor="#64748b"
+              multiline
+            />
+
+            <View style={styles.timeRow}>
+              <View style={styles.timeField}>
+                <Text style={styles.label}>Start Time</Text>
+                <TextInput
+                  style={styles.input}
+                  value={startTime}
+                  onChangeText={setStartTime}
+                  placeholder="HH:MM"
+                  placeholderTextColor="#64748b"
+                />
+              </View>
+              <View style={styles.timeField}>
+                <Text style={styles.label}>End Time</Text>
+                <TextInput
+                  style={styles.input}
+                  value={endTime}
+                  onChangeText={setEndTime}
+                  placeholder="HH:MM"
+                  placeholderTextColor="#64748b"
+                />
+              </View>
+            </View>
+          </View>
+
+          <View style={styles.actions}>
+            <TouchableOpacity style={styles.cancelBtn} onPress={() => router.back()} disabled={submitting}>
+              <Text style={styles.cancelText}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.submitBtn, submitting && styles.disabled]}
+              onPress={handleCreateAssignment}
+              disabled={submitting || loadingLocations || locations.length === 0}
+            >
+              {submitting ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text style={styles.submitText}>Create Assignment</Text>
+              )}
             </TouchableOpacity>
           </View>
-        ) : (
-          <View style={styles.locationList}>
-            {locations.map((location) => (
-              <TouchableOpacity
-                key={location.id}
-                style={[
-                  styles.locationItem,
-                  selectedLocationId === location.id && styles.locationItemSelected,
-                ]}
-                onPress={() => selectLocation(location)}
-              >
-                <Text
-                  style={[
-                    styles.locationName,
-                    selectedLocationId === location.id && styles.locationNameSelected,
-                  ]}
-                >
-                  {location.name}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        )}
-
-        <View style={styles.card}>
-          <Text style={styles.label}>Assigned Areas</Text>
-          <TextInput
-            style={[styles.input, styles.multiline]}
-            value={assignedAreas}
-            onChangeText={setAssignedAreas}
-            placeholder={selectedLocation?.assigned_areas || 'Comma-separated areas'}
-            placeholderTextColor="#64748b"
-            multiline
-          />
-
-          <View style={styles.timeRow}>
-            <View style={styles.timeField}>
-              <Text style={styles.label}>Start Time</Text>
-              <TextInput
-                style={styles.input}
-                value={startTime}
-                onChangeText={setStartTime}
-                placeholder="HH:MM"
-                placeholderTextColor="#64748b"
-              />
-            </View>
-            <View style={styles.timeField}>
-              <Text style={styles.label}>End Time</Text>
-              <TextInput
-                style={styles.input}
-                value={endTime}
-                onChangeText={setEndTime}
-                placeholder="HH:MM"
-                placeholderTextColor="#64748b"
-              />
-            </View>
-          </View>
-        </View>
-
-        <View style={styles.actions}>
-          <TouchableOpacity style={styles.cancelBtn} onPress={() => router.back()} disabled={submitting}>
-            <Text style={styles.cancelText}>Cancel</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.submitBtn, submitting && styles.disabled]}
-            onPress={handleCreateAssignment}
-            disabled={submitting || loadingLocations || locations.length === 0}
-          >
-            {submitting ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <Text style={styles.submitText}>Create Assignment</Text>
-            )}
-          </TouchableOpacity>
-        </View>
-      </ScrollView>
+        </ScrollView>
+        <CustomToast
+          visible={toast.visible}
+          message={toast.message}
+          type={toast.type}
+          onHide={() => setToast((prev) => ({ ...prev, visible: false }))}
+        />
+      </View>
     </SafeAreaView>
   );
 }
@@ -256,6 +282,9 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#0f172a',
+  },
+  page: {
+    flex: 1,
   },
   content: {
     padding: 16,

@@ -1,9 +1,8 @@
 import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -12,6 +11,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import CustomToast, { type ToastType } from '@/components/CustomToast';
 import { getUserSession } from './services/auth.storage';
 
 const API_URL = Constants.expoConfig?.extra?.apiUrl;
@@ -21,11 +21,30 @@ export default function AddLocationsScreen() {
   const [name, setName] = useState('');
   const [assignedAreas, setAssignedAreas] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [toast, setToast] = useState<{ visible: boolean; message: string; type: ToastType }>({
+    visible: false,
+    message: '',
+    type: 'success',
+  });
+  const redirectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (redirectTimeoutRef.current) {
+        clearTimeout(redirectTimeoutRef.current);
+      }
+    },
+    []
+  );
+
+  const showToast = (message: string, type: ToastType) => {
+    setToast({ visible: true, message, type });
+  };
 
   const handleSubmit = async () => {
     const trimmedName = name.trim();
     if (!trimmedName) {
-      Alert.alert('Validation Error', 'Location name is required.');
+      showToast('Location name is required.', 'error');
       return;
     }
 
@@ -34,9 +53,8 @@ export default function AddLocationsScreen() {
       const { token } = await getUserSession();
 
       if (!token) {
-        Alert.alert('Session Expired', 'Please login again.', [
-          { text: 'OK', onPress: () => router.replace('/login') },
-        ]);
+        showToast('Session expired. Please login again.', 'error');
+        redirectTimeoutRef.current = setTimeout(() => router.replace('/login'), 1200);
         return;
       }
 
@@ -57,14 +75,10 @@ export default function AddLocationsScreen() {
         throw new Error(message || 'Failed to create location');
       }
 
-      Alert.alert('Success', 'Location added successfully.', [
-        {
-          text: 'OK',
-          onPress: () => router.replace('/locations'),
-        },
-      ]);
+      showToast('Location added successfully.', 'success');
+      redirectTimeoutRef.current = setTimeout(() => router.replace('/locations'), 1200);
     } catch (error: any) {
-      Alert.alert('Create Failed', error?.message || 'Failed to create location.');
+      showToast(error?.message || 'Failed to create location.', 'error');
     } finally {
       setIsSubmitting(false);
     }
@@ -72,56 +86,64 @@ export default function AddLocationsScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.content}>
-        <Text style={styles.title}>Add New Location</Text>
-        <Text style={styles.subtitle}>Create a location for your organization guards.</Text>
+      <View style={styles.page}>
+        <ScrollView contentContainerStyle={styles.content}>
+          <Text style={styles.title}>Add New Location</Text>
+          <Text style={styles.subtitle}>Create a location for your organization guards.</Text>
 
-        <View style={styles.formGroup}>
-          <Text style={styles.label}>Location Name</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="e.g. University Of Nairobi"
-            placeholderTextColor="#64748b"
-            value={name}
-            onChangeText={setName}
-          />
-        </View>
+          <View style={styles.formGroup}>
+            <Text style={styles.label}>Location Name</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="e.g. University Of Nairobi"
+              placeholderTextColor="#64748b"
+              value={name}
+              onChangeText={setName}
+            />
+          </View>
 
-        <View style={styles.formGroup}>
-          <Text style={styles.label}>Assigned Areas</Text>
-          <TextInput
-            style={[styles.input, styles.multiline]}
-            placeholder="e.g. Gate A, Parking Zone 1, Lobby"
-            placeholderTextColor="#64748b"
-            value={assignedAreas}
-            onChangeText={setAssignedAreas}
-            multiline
-          />
-          <Text style={styles.hint}>Use commas to separate multiple areas.</Text>
-        </View>
+          <View style={styles.formGroup}>
+            <Text style={styles.label}>Assigned Areas</Text>
+            <TextInput
+              style={[styles.input, styles.multiline]}
+              placeholder="e.g. Gate A, Parking Zone 1, Lobby"
+              placeholderTextColor="#64748b"
+              value={assignedAreas}
+              onChangeText={setAssignedAreas}
+              multiline
+            />
+            <Text style={styles.hint}>Use commas to separate multiple areas.</Text>
+          </View>
 
-        <View style={styles.actions}>
-          <TouchableOpacity
-            style={styles.cancelBtn}
-            onPress={() => router.back()}
-            disabled={isSubmitting}
-          >
-            <Text style={styles.cancelText}>Cancel</Text>
-          </TouchableOpacity>
+          <View style={styles.actions}>
+            <TouchableOpacity
+              style={styles.cancelBtn}
+              onPress={() => router.back()}
+              disabled={isSubmitting}
+            >
+              <Text style={styles.cancelText}>Cancel</Text>
+            </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[styles.submitBtn, isSubmitting && styles.disabledBtn]}
-            onPress={handleSubmit}
-            disabled={isSubmitting}
-          >
-            {isSubmitting ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <Text style={styles.submitText}>Add Location</Text>
-            )}
-          </TouchableOpacity>
-        </View>
-      </ScrollView>
+            <TouchableOpacity
+              style={[styles.submitBtn, isSubmitting && styles.disabledBtn]}
+              onPress={handleSubmit}
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text style={styles.submitText}>Add Location</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+        <CustomToast
+          visible={toast.visible}
+          message={toast.message}
+          type={toast.type}
+          onHide={() => setToast((prev) => ({ ...prev, visible: false }))}
+        />
+      </View>
     </SafeAreaView>
   );
 }
@@ -130,6 +152,9 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#0f172a',
+  },
+  page: {
+    flex: 1,
   },
   content: {
     padding: 16,

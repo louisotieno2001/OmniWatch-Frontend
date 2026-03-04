@@ -83,6 +83,13 @@ export default function LoginScreen() {
         // Store the JWT token using AsyncStorage
         await saveUserSession(data.token, data.user);
 
+        if (data?.user?.role === 'guard' && data?.patrol_status === 'logged_out_on_patrol') {
+          Alert.alert(
+            'Patrol Ongoing',
+            'Your previous patrol was never ended. Patrol tracking will resume after login.'
+          );
+        }
+
         // console.log('Login successful, user:', data.user);
 
         // Role-based redirection
