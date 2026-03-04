@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   SafeAreaView,
   StyleSheet,
@@ -162,23 +162,23 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
   // Persistent Patrol State
   const [patrolId, setPatrolId] = useState<string | null>(null);
   const [startTime, setStartTime] = useState<Date | null>(null);
-  const [locationData, setLocationData] = useState<Array<{latitude: number, longitude: number, timestamp: number}>>([]);
+  const [locationData, setLocationData] = useState<{latitude: number, longitude: number, timestamp: number}[]>([]);
   const [currentLocation, setCurrentLocation] = useState<{latitude: number, longitude: number} | null>(null);
   const locationSubscription = useRef<Location.LocationSubscription | null>(null);
 
-  const getElapsedSeconds = (startedAt: Date | null) => {
+  const getElapsedSeconds = useCallback((startedAt: Date | null) => {
     if (!startedAt) return 0;
     const startMs = startedAt.getTime();
     if (Number.isNaN(startMs)) return 0;
     const elapsedMs = Date.now() - startMs;
     return Math.max(0, Math.floor(elapsedMs / 1000));
-  };
+  }, []);
 
-  const isPatrolOngoing = (status?: PatrolLifecycleStatus, endTime?: string) => {
+  const isPatrolOngoing = useCallback((status?: PatrolLifecycleStatus, endTime?: string) => {
     if (endTime) return false;
     if (!status) return false;
     return ACTIVE_PATROL_STATUSES.includes(status);
-  };
+  }, []);
   
   // Guard Profile State - initialize with empty values
   const [guardProfile, setGuardProfile] = useState<GuardProfile>({
@@ -232,13 +232,88 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
     loadDarkModePreference();
   }, []);
 
-  // Load user session on mount
-  useEffect(() => {
-    loadUserSession();
+   // Start location tracking
+  const startLocationTracking = useCallback(async () => {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Denied', 'Location permission is required for patrol tracking.');
+        return;
+      }
+
+      locationSubscription.current = await Location.watchPositionAsync(
+        {
+          accuracy: Location.Accuracy.High,
+          timeInterval: 5000, // Update every 5 seconds
+          distanceInterval: 10, // Update every 10 meters
+        },
+        (location) => {
+          const newLocation = {
+            latitude: location.coords.latitude,
+            longitude: location.coords.longitude,
+            timestamp: Date.now(),
+          };
+          setCurrentLocation({ latitude: newLocation.latitude, longitude: newLocation.longitude });
+          setLocationData(prev => [...prev, newLocation]);
+        }
+      );
+    } catch (error) {
+      console.error('Error starting location tracking:', error);
+    }
   }, []);
 
-  // Load user session and assignments
-  const loadUserSession = async () => {
+  // Load persistent patrol data from AsyncStorage
+  const loadPersistentPatrolData = useCallback(async (sessionUser?: UserData) => {
+    try {
+      const patrolData = await AsyncStorage.getItem('ongoingPatrol');
+      if (patrolData) {
+        const parsed = JSON.parse(patrolData);
+        const parsedStartTime = parsed.startTime ? new Date(parsed.startTime) : null;
+        setIsRecording(true);
+        setPatrolId(parsed.patrolId);
+        setStartTime(parsedStartTime);
+        setRecordingTime(getElapsedSeconds(parsedStartTime));
+        setLocationData(parsed.locationData || []);
+        setRecordingStatus('Patrol resumed from previous session');
+
+        // Resume location tracking
+        startLocationTracking();
+        return;
+      }
+
+      const serverPatrol = sessionUser?.ongoing_patrol;
+      if (serverPatrol && isPatrolOngoing(serverPatrol.status, serverPatrol.end_time)) {
+        const patrolStart = serverPatrol.start_time ? new Date(serverPatrol.start_time) : null;
+
+        setIsRecording(true);
+        setPatrolId(serverPatrol.id);
+        setStartTime(patrolStart);
+        setRecordingTime(getElapsedSeconds(patrolStart));
+        setRecordingStatus(
+          sessionUser?.patrol_status === 'logged_out_on_patrol'
+            ? 'Patrol is still ongoing. You were logged out during patrol and tracking has resumed.'
+            : 'Patrol resumed from server state'
+        );
+
+        await AsyncStorage.setItem(
+          'ongoingPatrol',
+          JSON.stringify({
+            patrolId: serverPatrol.id,
+            startTime: serverPatrol.start_time,
+            locationData: [],
+          })
+        );
+
+        startLocationTracking();
+      }
+    } catch (error) {
+      console.error('Error loading persistent patrol data:', error);
+    }
+  }, [startLocationTracking, isPatrolOngoing, getElapsedSeconds]);
+
+  // Load user session on mount
+  useEffect(() => {
+    const loadUserSession = async () => {
     try {
       setIsLoading(true);
       const { token, userData: storedUserData } = await getUserSession();
@@ -343,10 +418,13 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
     } finally {
       setIsLoading(false);
     }
-  };
+    };
+
+    loadUserSession();
+  }, [router, loadPersistentPatrolData]);
 
   // Fetch assignments from backend
-  const fetchAssignments = async (token: string, profile: GuardProfile, locations: Array<{id: string, name: string}>) => {
+  const fetchAssignments = async (token: string, profile: GuardProfile, locations: {id: string, name: string}[]) => {
     try {
       const response = await fetch(`${API_URL}/my-assignments`, {
         method: 'GET',
@@ -429,55 +507,6 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
       console.error('Error fetching locations and areas:', error);
     }
     return fetchedLocations;
-  };
-
-  // Load persistent patrol data from AsyncStorage
-  const loadPersistentPatrolData = async (sessionUser?: UserData) => {
-    try {
-      const patrolData = await AsyncStorage.getItem('ongoingPatrol');
-      if (patrolData) {
-        const parsed = JSON.parse(patrolData);
-        const parsedStartTime = parsed.startTime ? new Date(parsed.startTime) : null;
-        setIsRecording(true);
-        setPatrolId(parsed.patrolId);
-        setStartTime(parsedStartTime);
-        setRecordingTime(getElapsedSeconds(parsedStartTime));
-        setLocationData(parsed.locationData || []);
-        setRecordingStatus('Patrol resumed from previous session');
-
-        // Resume location tracking
-        startLocationTracking();
-        return;
-      }
-
-      const serverPatrol = sessionUser?.ongoing_patrol;
-      if (serverPatrol && isPatrolOngoing(serverPatrol.status, serverPatrol.end_time)) {
-        const patrolStart = serverPatrol.start_time ? new Date(serverPatrol.start_time) : null;
-
-        setIsRecording(true);
-        setPatrolId(serverPatrol.id);
-        setStartTime(patrolStart);
-        setRecordingTime(getElapsedSeconds(patrolStart));
-        setRecordingStatus(
-          sessionUser?.patrol_status === 'logged_out_on_patrol'
-            ? 'Patrol is still ongoing. You were logged out during patrol and tracking has resumed.'
-            : 'Patrol resumed from server state'
-        );
-
-        await AsyncStorage.setItem(
-          'ongoingPatrol',
-          JSON.stringify({
-            patrolId: serverPatrol.id,
-            startTime: serverPatrol.start_time,
-            locationData: [],
-          })
-        );
-
-        startLocationTracking();
-      }
-    } catch (error) {
-      console.error('Error loading persistent patrol data:', error);
-    }
   };
 
   // Fetch patrol history from API
@@ -574,7 +603,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
       });
 
       if (response.ok) {
-        const data = await response.json();
+        // const data = await response.json();
         Alert.alert('Success', 'Log created successfully');
         
         // Reset form
@@ -676,35 +705,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
     setCreateLogModalVisible(false);
   };
 
-  // Start location tracking
-  const startLocationTracking = async () => {
-    try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('Permission Denied', 'Location permission is required for patrol tracking.');
-        return;
-      }
-
-      locationSubscription.current = await Location.watchPositionAsync(
-        {
-          accuracy: Location.Accuracy.High,
-          timeInterval: 5000, // Update every 5 seconds
-          distanceInterval: 10, // Update every 10 meters
-        },
-        (location) => {
-          const newLocation = {
-            latitude: location.coords.latitude,
-            longitude: location.coords.longitude,
-            timestamp: Date.now(),
-          };
-          setCurrentLocation({ latitude: newLocation.latitude, longitude: newLocation.longitude });
-          setLocationData(prev => [...prev, newLocation]);
-        }
-      );
-    } catch (error) {
-      console.error('Error starting location tracking:', error);
-    }
-  };
+ 
 
   // Stop location tracking
   const stopLocationTracking = () => {
@@ -715,7 +716,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
   };
 
   // Send periodic location update to server
-  const sendPeriodicLocationUpdate = async () => {
+  const sendPeriodicLocationUpdate = useCallback(async () => {
     if (!patrolId || locationData.length === 0) {
       return;
     }
@@ -755,7 +756,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
     } catch (error) {
       console.error('Error sending periodic location update:', error);
     }
-  };
+  }, [patrolId, locationData]);
 
   // Periodic location update effect
   useEffect(() => {
@@ -773,7 +774,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
         clearInterval(interval);
       }
     };
-  }, [isRecording, patrolId, locationData]);
+  }, [isRecording, patrolId, locationData, sendPeriodicLocationUpdate]);
 
   // Handle logout - show custom modal instead of Alert
   const handleLogout = () => {
@@ -835,7 +836,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [isRecording, startTime]);
+  }, [isRecording, startTime, getElapsedSeconds]);
 
   // Keep timer accurate across app background/foreground transitions
   useEffect(() => {
@@ -850,7 +851,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
     return () => {
       subscription.remove();
     };
-  }, [isRecording, startTime]);
+  }, [isRecording, startTime, getElapsedSeconds]);
 
   // Cleanup location tracking on unmount
   useEffect(() => {
