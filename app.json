@@ -20,6 +20,7 @@
     },
     "android": {
       "permissions": [
+        "android.permission.POST_NOTIFICATIONS",
         "android.permission.CALL_PHONE",
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.ACCESS_COARSE_LOCATION",
@@ -43,6 +44,7 @@
     },
     "plugins": [
       "expo-router",
+      "expo-notifications",
       [
         "expo-location",
         {
@@ -72,7 +74,7 @@
     },
     "extra": {
       "router": {},
-      "apiUrl": "http://10.154.7.98:5000/api",
+      "apiUrl": "http://10.100.34.16:5000/api",
       "eas": {
         "projectId": "5eac3a1d-6be1-4abe-aa37-8e4ead0658b5"
       }

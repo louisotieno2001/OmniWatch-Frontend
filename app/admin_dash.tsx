@@ -18,6 +18,11 @@ import {
 } from 'react-native';
 import Constants from 'expo-constants';
 import { getUserSession, clearUserSession } from './services/auth.storage';
+import {
+  configureForegroundNotificationHandling,
+  registerAdminPushToken,
+  unregisterAdminPushToken,
+} from './services/push.notifications';
 
 const API_URL = Constants.expoConfig?.extra?.apiUrl;
 
@@ -232,6 +237,10 @@ export default function AdminDashboard() {
 
   const handleLogout = async () => {
     try {
+      const { token } = await getUserSession();
+      if (token && API_URL) {
+        await unregisterAdminPushToken(API_URL, token);
+      }
       await clearUserSession();
       router.replace('/login');
     } catch (error: any) {
@@ -278,6 +287,14 @@ export default function AdminDashboard() {
           role: typedUserData.role || 'admin',
           company: prev.company || typedUserData.invite_code || '',
         }));
+
+        if (API_URL) {
+          configureForegroundNotificationHandling();
+          const tokenRegistration = await registerAdminPushToken(API_URL, token);
+          if (!tokenRegistration.expoPushToken) {
+            console.warn('[AdminDash] Push token registration skipped:', tokenRegistration.reason);
+          }
+        }
 
         // Fetch data from APIs
         const fetchAllData = async (token: string) => {
@@ -428,39 +445,46 @@ export default function AdminDashboard() {
 
             // Fetch admin notifications
             try {
-              console.log('[AdminDash] Fetching admin notifications from API...');
-              const notificationsResponse = await fetch(`${API_URL}/admin/notifications?limit=100`, {
-                method: 'GET',
-                headers: getAuthHeaders(token),
-              });
+              if (typedUserData.invite_code) {
+                console.log('[AdminDash] Fetching admin notifications from API...');
+                const notificationsResponse = await fetch(`${API_URL}/admin/notifications?limit=100`, {
+                  method: 'GET',
+                  headers: getAuthHeaders(token),
+                });
 
-              console.log('[AdminDash] Notifications response status:', notificationsResponse.status);
+                console.log('[AdminDash] Notifications response status:', notificationsResponse.status);
 
-              if (notificationsResponse.ok) {
-                const notificationsData = await notificationsResponse.json();
-                const rawNotifications = notificationsData.notifications || [];
-                const mappedNotifications: AdminNotification[] = rawNotifications
-                  .map((item: any) => ({
-                    id: String(item.id || ''),
-                    type: item.type || 'log_created',
-                    priority: item.priority === 'high' ? 'high' : item.priority === 'medium' ? 'medium' : 'low',
-                    title: item.title || 'Notification',
-                    message: item.message || '',
-                    guard_id: item.guard_id || null,
-                    guard_name: item.guard_name || null,
-                    patrol_id: item.patrol_id || null,
-                    log_id: item.log_id || null,
-                    location: item.location || 'Unknown Location',
-                    event_time: item.event_time || new Date().toISOString(),
-                  }))
-                  .filter((item: AdminNotification) => item.id && item.event_time);
-                setNotifications(mappedNotifications);
+                if (notificationsResponse.ok) {
+                  const notificationsData = await notificationsResponse.json();
+                  const rawNotifications = notificationsData.notifications || [];
+                  const mappedNotifications: AdminNotification[] = rawNotifications
+                    .map((item: any) => ({
+                      id: String(item.id || ''),
+                      type: item.type || 'log_created',
+                      priority: item.priority === 'high' ? 'high' : item.priority === 'medium' ? 'medium' : 'low',
+                      title: item.title || 'Notification',
+                      message: item.message || '',
+                      guard_id: item.guard_id || null,
+                      guard_name: item.guard_name || null,
+                      patrol_id: item.patrol_id || null,
+                      log_id: item.log_id || null,
+                      location: item.location || 'Unknown Location',
+                      event_time: item.event_time || new Date().toISOString(),
+                    }))
+                    .filter((item: AdminNotification) => item.id && item.event_time);
+                  setNotifications(mappedNotifications);
+                } else {
+                  const errorText = await notificationsResponse.text();
+                  // Keep the dashboard usable even if this optional endpoint fails.
+                  console.warn('[AdminDash] Notifications endpoint unavailable. Status:', notificationsResponse.status, 'Response:', errorText);
+                  setNotifications([]);
+                }
               } else {
-                const errorText = await notificationsResponse.text();
-                console.error('[AdminDash] Failed to fetch notifications. Status:', notificationsResponse.status, 'Response:', errorText);
+                setNotifications([]);
               }
             } catch (error: any) {
-              console.error('[AdminDash] Error fetching notifications:', error.message || error);
+              console.warn('[AdminDash] Error fetching notifications:', error.message || error);
+              setNotifications([]);
             }
 
             // Fetch locations
@@ -552,8 +576,12 @@ export default function AdminDashboard() {
 
     const pollAdminFeeds = async () => {
       try {
-        const { token } = await getUserSession();
-        if (!token || !isMounted) return;
+        const { token, userData } = await getUserSession();
+        if (!token || !isMounted || !API_URL) return;
+        if (!userData?.invite_code) {
+          setNotifications([]);
+          return;
+        }
 
         const [notificationsResponse, logsResponse] = await Promise.all([
           fetch(`${API_URL}/admin/notifications?limit=100`, {
