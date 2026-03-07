@@ -290,10 +290,7 @@ export default function AdminDashboard() {
 
         if (API_URL) {
           configureForegroundNotificationHandling();
-          const tokenRegistration = await registerAdminPushToken(API_URL, token);
-          if (!tokenRegistration.expoPushToken) {
-            console.warn('[AdminDash] Push token registration skipped:', tokenRegistration.reason);
-          }
+          await registerAdminPushToken(API_URL, token);
         }
 
         // Fetch data from APIs
@@ -303,17 +300,17 @@ export default function AdminDashboard() {
 
             // Fetch guards
             try {
-              console.log('[AdminDash] Fetching guards from API...');
+              // console.log('[AdminDash] Fetching guards from API...');
               const guardsResponse = await fetch(`${API_URL}/admin/guards`, {
                 method: 'GET',
                 headers: getAuthHeaders(token),
               });
               
-              console.log('[AdminDash] Guards response status:', guardsResponse.status);
+              // console.log('[AdminDash] Guards response status:', guardsResponse.status);
               
               if (guardsResponse.ok) {
                 const guardsData = await guardsResponse.json();
-                console.log('[AdminDash] Raw guards data:', guardsData);
+                // console.log('[AdminDash] Raw guards data:', guardsData);
                 
                 // Map API response to Guard interface
                 const mappedGuards: Guard[] = (guardsData.guards || []).map((guard: any) => ({
@@ -342,7 +339,7 @@ export default function AdminDashboard() {
                   joinDate: guard.date_created ? new Date(guard.date_created).toISOString() : new Date().toISOString(),
                 }));
                 
-                console.log('[AdminDash] Mapped guards:', mappedGuards);
+                // console.log('[AdminDash] Mapped guards:', mappedGuards);
                 setGuards(mappedGuards);
               } else {
                 const errorText = await guardsResponse.text();
@@ -354,17 +351,17 @@ export default function AdminDashboard() {
 
             // Fetch patrols
             try {
-              console.log('[AdminDash] Fetching patrols from API...');
+              // console.log('[AdminDash] Fetching patrols from API...');
               const patrolsResponse = await fetch(`${API_URL}/admin/patrols?limit=50`, {
                 method: 'GET',
                 headers: getAuthHeaders(token),
               });
               
-              console.log('[AdminDash] Patrols response status:', patrolsResponse.status);
+              // console.log('[AdminDash] Patrols response status:', patrolsResponse.status);
               
               if (patrolsResponse.ok) {
                 const patrolsData = await patrolsResponse.json();
-                console.log('[AdminDash] Raw patrols data:', patrolsData);
+                // console.log('[AdminDash] Raw patrols data:', patrolsData);
                 
                 // Map API response to Patrol interface
                 const mappedPatrols: Patrol[] = (patrolsData.patrols || []).map((patrol: any) => ({
@@ -394,7 +391,7 @@ export default function AdminDashboard() {
                   notes: patrol.notes || '',
                 }));
                 
-                console.log('[AdminDash] Mapped patrols:', mappedPatrols);
+                // console.log('[AdminDash] Mapped patrols:', mappedPatrols);
                 setPatrols(mappedPatrols);
               } else {
                 const errorText = await patrolsResponse.text();
@@ -406,17 +403,17 @@ export default function AdminDashboard() {
 
             // Fetch logs
             try {
-              console.log('[AdminDash] Fetching logs from API...');
+              // console.log('[AdminDash] Fetching logs from API...');
               const logsResponse = await fetch(`${API_URL}/admin/logs?limit=50`, {
                 method: 'GET',
                 headers: getAuthHeaders(token),
               });
               
-              console.log('[AdminDash] Logs response status:', logsResponse.status);
+              // console.log('[AdminDash] Logs response status:', logsResponse.status);
               
               if (logsResponse.ok) {
                 const logsData = await logsResponse.json();
-                console.log('[AdminDash] Raw logs data:', logsData);
+                // console.log('[AdminDash] Raw logs data:', logsData);
                 
                 const rawLogs = logsData.logs || [];
                 const mappedLogs: LogItem[] = rawLogs.map((log: any) => ({
@@ -433,7 +430,7 @@ export default function AdminDashboard() {
                   images: typeof log.images === 'string' ? log.images : Array.isArray(log.images) ? JSON.stringify(log.images) : null,
                 }));
                 
-                console.log('[AdminDash] Mapped logs:', mappedLogs);
+                // console.log('[AdminDash] Mapped logs:', mappedLogs);
                 setLogs(mappedLogs);
               } else {
                 const errorText = await logsResponse.text();
@@ -446,7 +443,7 @@ export default function AdminDashboard() {
             // Fetch admin notifications
             try {
               if (typedUserData.invite_code) {
-                console.log('[AdminDash] Fetching admin notifications from API...');
+                // console.log('[AdminDash] Fetching admin notifications from API...');
                 const notificationsResponse = await fetch(`${API_URL}/admin/notifications?limit=100`, {
                   method: 'GET',
                   headers: getAuthHeaders(token),
@@ -489,17 +486,17 @@ export default function AdminDashboard() {
 
             // Fetch locations
             try {
-              console.log('[AdminDash] Fetching locations from API...');
+              // console.log('[AdminDash] Fetching locations from API...');
               const locationsResponse = await fetch(`${API_URL}/admin/locations`, {
                 method: 'GET',
                 headers: getAuthHeaders(token),
               });
               
-              console.log('[AdminDash] Locations response status:', locationsResponse.status);
+              // console.log('[AdminDash] Locations response status:', locationsResponse.status);
               
               if (locationsResponse.ok) {
                 const locationsData = await locationsResponse.json();
-                console.log('[AdminDash] Raw locations data:', locationsData);
+                // console.log('[AdminDash] Raw locations data:', locationsData);
                 setLocations(locationsData.locations || []);
               } else {
                 const errorText = await locationsResponse.text();
@@ -511,17 +508,17 @@ export default function AdminDashboard() {
 
             // Fetch current user profile
             try {
-              console.log('[AdminDash] Fetching user profile from API...');
+              // console.log('[AdminDash] Fetching user profile from API...');
               const userResponse = await fetch(`${API_URL}/me`, {
                 method: 'GET',
                 headers: getAuthHeaders(token),
               });
               
-              console.log('[AdminDash] User profile response status:', userResponse.status);
+              // console.log('[AdminDash] User profile response status:', userResponse.status);
               
               if (userResponse.ok) {
                 const userData = await userResponse.json();
-                console.log('[AdminDash] Raw user data:', userData);
+                // console.log('[AdminDash] Raw user data:', userData);
                 if (userData.user) {
                   setAdminProfile(prev => ({
                     ...prev,
@@ -553,7 +550,7 @@ export default function AdminDashboard() {
             console.error('[AdminDash] Error in fetchAllData:', error.message || error);
           } finally {
             setIsLoading(false);
-            console.log('[AdminDash] fetchAllData completed');
+            // console.log('[AdminDash] fetchAllData completed');
           }
         };
 

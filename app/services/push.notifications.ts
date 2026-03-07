@@ -5,6 +5,16 @@ import { Platform } from 'react-native';
 const getProjectId = () =>
   Constants.expoConfig?.extra?.eas?.projectId || Constants.easConfig?.projectId || undefined;
 
+const isKnownNonFatalPushSetupError = (message: string) => {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes('default firebaseapp is not initialized') ||
+    lower.includes('fcm-credentials') ||
+    lower.includes('fcm credentials') ||
+    lower.includes('firebaseapp.initializeapp')
+  );
+};
+
 export const configureForegroundNotificationHandling = () => {
   Notifications.setNotificationHandler({
     handleNotification: async () => ({
@@ -75,7 +85,16 @@ export const registerAdminPushToken = async (
 
     return { expoPushToken };
   } catch (error: any) {
-    console.error('[Push] registerAdminPushToken failed:', error?.message || error);
+    const message = String(error?.message || error || '');
+    if (isKnownNonFatalPushSetupError(message)) {
+      return { expoPushToken: null, reason: 'push_service_unavailable' };
+    }
+
+    // Keep unexpected failures discoverable in development without noisy production logs.
+    if (__DEV__) {
+      console.warn('[Push] registerAdminPushToken failed:', message);
+    }
+
     return { expoPushToken: null, reason: 'unexpected_error' };
   }
 };

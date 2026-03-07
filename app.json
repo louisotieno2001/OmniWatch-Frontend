@@ -14,11 +14,14 @@
         "NSLocationWhenInUseUsageDescription": "OmniWatch uses your location to track active patrol routes.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "OmniWatch keeps updating location during active patrols, even in the background.",
         "UIBackgroundModes": [
+          "location",
           "location"
         ]
-      }
+      },
+      "bundleIdentifier": "com.omni.hustlerati.com"
     },
     "android": {
+      "googleServicesFile": "./google-services.json",
       "permissions": [
         "android.permission.POST_NOTIFICATIONS",
         "android.permission.CALL_PHONE",
@@ -79,6 +82,7 @@
         "projectId": "5eac3a1d-6be1-4abe-aa37-8e4ead0658b5"
       }
     },
-    "owner": "louisotieno2001"
+    "owner": "louisotieno2001",
+    "description": "OmniWatch is a comprehensive security guard management app designed to streamline operations, enhance communication, and improve safety for security personnel and their supervisors. With features like real-time patrol tracking, incident reporting, and task management, OmniWatch empowers security teams to work more efficiently and effectively."
   }
 }
