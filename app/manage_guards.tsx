@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
 import { useRouter, useFocusEffect } from 'expo-router';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState, useMemo } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -15,12 +15,12 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { getUserSession } from './services/auth.storage';
+import { getUserSession } from '@/services/auth.storage';
 import {
   getPhonePermissionStatus,
   requestPhonePermission,
-} from './utils/permissions';
-import { CustomToast, type ToastType } from '@/components/CustomToast';
+} from '@/utils/permissions';
+import CustomToast, { type ToastType } from '@/components/CustomToast';
 
 const API_URL = Constants.expoConfig?.extra?.apiUrl;
 

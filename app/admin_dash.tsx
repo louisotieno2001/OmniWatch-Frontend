@@ -19,16 +19,16 @@ import * as Linking from 'expo-linking';
 import {
   getPhonePermissionStatus,
   requestPhonePermission,
-} from './utils/permissions';
+} from '@/utils/permissions';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Constants from 'expo-constants';
 import CustomToast, { type ToastType } from '@/components/CustomToast';
-import { getUserSession, clearUserSession, touchLastActive } from './services/auth.storage';
+import { getUserSession, clearUserSession, touchLastActive } from '@/services/auth.storage';
 import {
   configureForegroundNotificationHandling,
   registerAdminPushToken,
   unregisterAdminPushToken,
-} from './services/push.notifications';
+} from '@/services/push.notifications';
 
 const API_URL = Constants.expoConfig?.extra?.apiUrl;
 

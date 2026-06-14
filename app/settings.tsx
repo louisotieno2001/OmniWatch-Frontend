@@ -14,14 +14,14 @@ import {
   getPhonePermissionStatus,
   requestPhonePermission,
   testPhoneCall
-} from './utils/permissions';
+} from '@/utils/permissions';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
-import { clearUserSession, getUserSession } from './services/auth.storage';
+import { clearUserSession, getUserSession } from '@/services/auth.storage';
 import Constants from 'expo-constants';
 
 export default function SettingsScreen() {

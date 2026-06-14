@@ -21,9 +21,9 @@ import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import { MapView, Marker, Polyline } from '../components/MapView';
 import Constants from 'expo-constants';
-import { getUserSession, clearUserSession, touchLastActive } from './services/auth.storage';
-import { enqueue, processQueue } from './services/offline.queue';
-import { useNetworkStatus } from './services/network';
+import { getUserSession, clearUserSession, touchLastActive } from '@/services/auth.storage';
+import { enqueue, processQueue } from '@/services/offline.queue';
+import { useNetworkStatus } from '@/services/network';
 import CustomToast, { type ToastType } from '@/components/CustomToast';
 import {
   recordScan,
@@ -32,7 +32,7 @@ import {
   getMinutesSinceLastAnyScan,
   shouldNotifyLate,
   setLateNotified,
-} from './services/checkpoint.tracker';
+} from '@/services/checkpoint.tracker';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 
 const API_URL = Constants.expoConfig?.extra?.apiUrl;

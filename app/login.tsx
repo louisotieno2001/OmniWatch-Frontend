@@ -13,7 +13,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import CountryPicker, { CountryCode } from 'react-native-country-picker-modal';
 import Constants from 'expo-constants';
-import { saveUserSession } from './services/auth.storage';
+import { saveUserSession } from '@/services/auth.storage';
 import CustomToast, { type ToastType } from '@/components/CustomToast';
 const API_URL = Constants.expoConfig?.extra?.apiUrl;
 

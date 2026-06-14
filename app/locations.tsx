@@ -15,8 +15,8 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { getUserSession } from './services/auth.storage';
-import { CustomToast, type ToastType } from '@/components/CustomToast';
+import { getUserSession } from '@/services/auth.storage';
+import CustomToast, { type ToastType } from '@/components/CustomToast';
 
 const API_URL = Constants.expoConfig?.extra?.apiUrl;
 

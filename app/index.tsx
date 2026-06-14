@@ -2,7 +2,7 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { getUserSession } from './services/auth.storage';
+import { getUserSession } from '@/services/auth.storage';
 
 export default function HomeScreen() {
   const router = useRouter();
