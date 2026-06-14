@@ -24,6 +24,15 @@ import Constants from 'expo-constants';
 import { getUserSession, clearUserSession, touchLastActive } from './services/auth.storage';
 import { enqueue, processQueue } from './services/offline.queue';
 import { useNetworkStatus } from './services/network';
+import {
+  recordScan,
+  isOnCooldown,
+  getMinutesRemainingOnCooldown,
+  getMinutesSinceLastAnyScan,
+  shouldNotifyLate,
+  setLateNotified,
+} from './services/checkpoint.tracker';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 
 const API_URL = Constants.expoConfig?.extra?.apiUrl;
 
@@ -434,6 +443,13 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
   const [recordingStatus, setRecordingStatus] = useState('');
   const [checkpointModalVisible, setCheckpointModalVisible] = useState(false);
   const [currentCheckpoint, setCurrentCheckpoint] = useState('');
+
+  // QR Scanner State
+  const [qrScannerVisible, setQrScannerVisible] = useState(false);
+  const [cameraPermission, requestCameraPermission] = useCameraPermissions();
+  const [scannedQrArea, setScannedQrArea] = useState('');
+  const [scannedQrNote, setScannedQrNote] = useState('');
+  const [scanningEnabled, setScanningEnabled] = useState(true);
 
   // Patrol History State
   const [patrolHistory, setPatrolHistory] = useState<PatrolData[]>([]);
@@ -1531,6 +1547,180 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
     }
   };
 
+  // Open QR scanner
+  const openQrScanner = async () => {
+    if (!isRecording) {
+      Alert.alert('Start Patrol', 'Start a patrol before scanning checkpoints.');
+      return;
+    }
+
+    if (!cameraPermission?.granted) {
+      const result = await requestCameraPermission();
+      if (!result.granted) {
+        Alert.alert('Camera Permission', 'Camera permission is required to scan QR codes.');
+        return;
+      }
+    }
+
+    setScannedQrArea('');
+    setScannedQrNote('');
+    setScanningEnabled(true);
+    setQrScannerVisible(true);
+  };
+
+  // Handle QR code scan result
+  const handleBarcodeScanned = async ({ data }: { data: string }) => {
+    if (!scanningEnabled) return;
+    setScanningEnabled(false);
+
+    let area = data.trim();
+    try {
+      const parsed = JSON.parse(data);
+      if (parsed.area) area = parsed.area;
+    } catch {}
+
+    if (!area) {
+      Alert.alert('Invalid QR', 'This QR code does not contain valid checkpoint data.');
+      setScanningEnabled(true);
+      return;
+    }
+
+    // Check cooldown (15 min)
+    const cooldown = await isOnCooldown(area);
+    if (cooldown) {
+      const remaining = await getMinutesRemainingOnCooldown(area);
+      Alert.alert(
+        'Checkpoint Too Soon',
+        `"${area}" was already scanned recently. Please wait ${remaining} minute${remaining !== 1 ? 's' : ''} before scanning again.`
+      );
+      setScanningEnabled(true);
+      return;
+    }
+
+    // Check if past late threshold (30 min since last scan of any area)
+    const isLate = await shouldNotifyLate();
+    if (isLate && isOnline) {
+      const minsSince = await getMinutesSinceLastAnyScan();
+      const { token } = await getUserSession();
+      if (token) {
+        try {
+          const resp = await fetch(`${API_URL}/checkpoint/late`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              minutes_since_last_scan: Math.floor(minsSince || 30),
+              patrol_id: patrolId,
+            }),
+          });
+          if (resp.ok) {
+            await setLateNotified();
+          }
+        } catch (err) {
+          console.error('[QR] Late notify error:', err);
+        }
+      }
+    }
+
+    setScannedQrArea(area);
+  };
+
+  // Submit QR scan as checkpoint
+  const submitQrCheckpoint = async () => {
+    const area = scannedQrArea;
+    if (!area) return;
+
+    setQrScannerVisible(false);
+
+    const checkpointBody = {
+      title: `QR Checkpoint: ${area}`,
+      description: scannedQrNote.trim() || 'QR Code checkpoint scan',
+      category: 'checkpoint',
+      patrol_id: patrolId,
+      images: null,
+    };
+
+    await recordScan(area);
+
+    const { token } = await getUserSession();
+    if (!token) {
+      await enqueue({
+        type: 'checkpoint',
+        endpoint: '/logs',
+        method: 'POST',
+        body: checkpointBody,
+        localPatrolId: patrolId?.startsWith('temp_') ? patrolId : undefined,
+      });
+      Alert.alert('Checkpoint Saved Offline', `QR Checkpoint: ${area}\nWill sync when online.`);
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/logs`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(checkpointBody),
+      });
+
+      if (response.ok) {
+        Alert.alert('Checkpoint Logged', `QR Checkpoint: ${area}${scannedQrNote.trim() ? `\nNote: ${scannedQrNote.trim()}` : ''}`);
+        await fetchLogs();
+        return;
+      }
+      throw new Error(`Server responded with ${response.status}`);
+    } catch {
+      await enqueue({
+        type: 'checkpoint',
+        endpoint: '/logs',
+        method: 'POST',
+        body: checkpointBody,
+        localPatrolId: patrolId?.startsWith('temp_') ? patrolId : undefined,
+      });
+      Alert.alert('Checkpoint Saved Offline', `QR Checkpoint: ${area}\nWill sync when online.`);
+    }
+  };
+
+  // Periodic late-check effect (every 60 seconds)
+  useEffect(() => {
+    if (!isRecording || !isOnline) return;
+
+    const checkLate = async () => {
+      const isLate = await shouldNotifyLate();
+      if (!isLate) return;
+
+      const minsSince = await getMinutesSinceLastAnyScan();
+      const { token } = await getUserSession();
+      if (token) {
+        try {
+          const resp = await fetch(`${API_URL}/checkpoint/late`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              minutes_since_last_scan: Math.floor(minsSince || 30),
+              patrol_id: patrolId,
+            }),
+          });
+          if (resp.ok) {
+            await setLateNotified();
+          }
+        } catch (err) {
+          console.error('[QR] Late notify error:', err);
+        }
+      }
+    };
+
+    const interval = setInterval(checkLate, 60000);
+    return () => clearInterval(interval);
+  }, [isRecording, isOnline, patrolId]);
+
   // Handle area toggle
   const toggleArea = (area: string) => {
     const newAreas = editableProfile.assignedAreas.includes(area)
@@ -1704,6 +1894,16 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
           </TouchableOpacity>
         ))}
       </View>
+
+      {/* Scan QR Code Button */}
+      <TouchableOpacity
+        style={[styles.qrScanButton, !isRecording && styles.qrScanButtonDisabled]}
+        onPress={openQrScanner}
+        disabled={!isRecording}
+      >
+        <Ionicons name="qr-code-outline" size={20} color="#fff" />
+        <Text style={styles.qrScanButtonText}>Scan QR Code</Text>
+      </TouchableOpacity>
 
       {/* Patrol History */}
       <Text style={styles.sectionTitle}>Recent Patrols</Text>
@@ -2205,6 +2405,73 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
             </View>
           </View>
         </View>
+      </Modal>
+
+      {/* QR Scanner Modal */}
+      <Modal
+        visible={qrScannerVisible}
+        transparent={false}
+        animationType="fade"
+        onRequestClose={() => setQrScannerVisible(false)}
+      >
+        {scannedQrArea ? (
+          <View style={styles.qrResultContainer}>
+            <View style={styles.qrResultContent}>
+              <Ionicons name="qr-code" size={48} color="#22c55e" />
+              <Text style={styles.qrResultTitle}>Checkpoint Scanned</Text>
+              <Text style={styles.qrResultArea}>{scannedQrArea}</Text>
+              <TextInput
+                style={styles.modalInput}
+                placeholder="Add notes (optional)"
+                placeholderTextColor="#64748b"
+                value={scannedQrNote}
+                onChangeText={setScannedQrNote}
+                multiline
+              />
+              <View style={styles.modalButtons}>
+                <TouchableOpacity
+                  style={[styles.modalButton, styles.modalCancel]}
+                  onPress={() => {
+                    setQrScannerVisible(false);
+                    setScanningEnabled(true);
+                  }}
+                >
+                  <Text style={styles.modalCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.modalButton, styles.modalSubmit]}
+                  onPress={submitQrCheckpoint}
+                >
+                  <Text style={styles.modalSubmitText}>Submit</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        ) : (
+          <View style={styles.qrScannerContainer}>
+            <CameraView
+              style={styles.qrCamera}
+              facing="back"
+              onBarcodeScanned={handleBarcodeScanned}
+              barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+            >
+              <View style={styles.qrScannerOverlay}>
+                <Text style={styles.qrScannerTitle}>Scan Checkpoint QR Code</Text>
+                <View style={styles.qrScannerFrame} />
+                <Text style={styles.qrScannerHint}>Point camera at the checkpoint QR code</Text>
+                <TouchableOpacity
+                  style={styles.qrScannerCancel}
+                  onPress={() => {
+                    setQrScannerVisible(false);
+                    setScanningEnabled(true);
+                  }}
+                >
+                  <Ionicons name="close" size={28} color="#fff" />
+                </TouchableOpacity>
+              </View>
+            </CameraView>
+          </View>
+        )}
       </Modal>
 
       {/* Start Time Picker Modal */}
@@ -3358,5 +3625,91 @@ const styles = StyleSheet.create({
   imageViewerImage: {
     width: '90%',
     height: '80%',
+  },
+  qrScanButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#7c3aed',
+    paddingVertical: 14,
+    borderRadius: 12,
+    gap: 8,
+    marginTop: 8,
+  },
+  qrScanButtonDisabled: {
+    opacity: 0.4,
+  },
+  qrScanButtonText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 15,
+  },
+  qrScannerContainer: {
+    flex: 1,
+    backgroundColor: '#000',
+  },
+  qrCamera: {
+    flex: 1,
+  },
+  qrScannerOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.3)',
+  },
+  qrScannerTitle: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '700',
+    marginBottom: 40,
+    textShadowColor: 'rgba(0,0,0,0.8)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 4,
+  },
+  qrScannerFrame: {
+    width: 250,
+    height: 250,
+    borderWidth: 3,
+    borderColor: '#7c3aed',
+    borderRadius: 16,
+    backgroundColor: 'transparent',
+  },
+  qrScannerHint: {
+    color: '#cbd5e1',
+    fontSize: 14,
+    marginTop: 24,
+  },
+  qrScannerCancel: {
+    position: 'absolute',
+    top: 60,
+    right: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  qrResultContainer: {
+    flex: 1,
+    backgroundColor: '#0f172a',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  qrResultContent: {
+    alignItems: 'center',
+  },
+  qrResultTitle: {
+    color: '#fff',
+    fontSize: 22,
+    fontWeight: '700',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  qrResultArea: {
+    color: '#22c55e',
+    fontSize: 18,
+    fontWeight: '600',
+    marginBottom: 24,
   },
 });

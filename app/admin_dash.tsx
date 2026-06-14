@@ -83,7 +83,8 @@ interface AdminNotification {
     | 'guard_late_start'
     | 'guard_logged_out_on_patrol'
     | 'patrol_ended_early'
-    | 'patrol_not_ended_after_shift';
+    | 'patrol_not_ended_after_shift'
+    | 'checkpoint_late';
   priority: 'high' | 'medium' | 'low';
   title: string;
   message: string;
@@ -737,6 +738,7 @@ export default function AdminDashboard() {
       case 'guard_logged_out_on_patrol': return 'log-out';
       case 'patrol_ended_early': return 'stop-circle';
       case 'patrol_not_ended_after_shift': return 'alert-circle';
+      case 'checkpoint_late': return 'qr-code';
       default: return 'notifications';
     }
   };
