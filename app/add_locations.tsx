@@ -21,6 +21,8 @@ export default function AddLocationsScreen() {
   const router = useRouter();
   const [name, setName] = useState('');
   const [assignedAreas, setAssignedAreas] = useState('');
+  const [latitude, setLatitude] = useState('');
+  const [longitude, setLongitude] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [toast, setToast] = useState<{ visible: boolean; message: string; type: ToastType }>({
     visible: false,
@@ -49,6 +51,23 @@ export default function AddLocationsScreen() {
       return;
     }
 
+    const latStr = latitude.trim();
+    const lngStr = longitude.trim();
+    let lat: number | null = null;
+    let lng: number | null = null;
+    if (latStr || lngStr) {
+      if (!latStr || !lngStr) {
+        showToast('Both latitude and longitude are required if providing coordinates.', 'error');
+        return;
+      }
+      lat = Number(latStr);
+      lng = Number(lngStr);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+        showToast('Invalid coordinates. Latitude must be -90 to 90, longitude -180 to 180.', 'error');
+        return;
+      }
+    }
+
     try {
       setIsSubmitting(true);
       const { token } = await getUserSession();
@@ -68,6 +87,8 @@ export default function AddLocationsScreen() {
         body: JSON.stringify({
           name: trimmedName,
           assigned_areas: assignedAreas.trim(),
+          latitude: lat,
+          longitude: lng,
         }),
       });
 
@@ -128,6 +149,29 @@ export default function AddLocationsScreen() {
               multiline
             />
             <Text style={styles.hint}>Use commas to separate multiple areas.</Text>
+          </View>
+
+          <View style={styles.formGroup}>
+            <Text style={styles.label}>GPS Coordinates (optional — used for geofence)</Text>
+            <View style={styles.coordRow}>
+              <TextInput
+                style={[styles.input, styles.coordInput]}
+                placeholder="Latitude"
+                placeholderTextColor="#64748b"
+                value={latitude}
+                onChangeText={setLatitude}
+                keyboardType="numeric"
+              />
+              <TextInput
+                style={[styles.input, styles.coordInput]}
+                placeholder="Longitude"
+                placeholderTextColor="#64748b"
+                value={longitude}
+                onChangeText={setLongitude}
+                keyboardType="numeric"
+              />
+            </View>
+            <Text style={styles.hint}>Guards must be within 1 km of these coordinates to start a patrol.</Text>
           </View>
 
           <View style={styles.actions}>
@@ -236,6 +280,13 @@ const styles = StyleSheet.create({
   multiline: {
     minHeight: 90,
     textAlignVertical: 'top',
+  },
+  coordRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  coordInput: {
+    flex: 1,
   },
   hint: {
     color: '#94a3b8',

@@ -64,7 +64,9 @@ interface Assignment {
 interface LocationData {
   id: string;
   name: string;
-  assigned_areas: string; // The raw comma-separated string from the backend
+  assigned_areas?: string;
+  latitude?: number | null;
+  longitude?: number | null;
 }
 // User data from session
 interface UserData {
@@ -1407,9 +1409,40 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
         return;
       }
 
+      // ---- Client-side geofence pre-check ----
+      const assignedLoc = locations.find((l) => l.id === guardProfile.assignmentLocationId);
+      if (assignedLoc && assignedLoc.latitude != null && assignedLoc.longitude != null) {
+        const locLat = Number(assignedLoc.latitude);
+        const locLng = Number(assignedLoc.longitude);
+        if (Number.isFinite(locLat) && Number.isFinite(locLng) && currentLocation) {
+          const dist = distanceBetweenCoordinatesMeters(
+            { latitude: currentLocation.latitude, longitude: currentLocation.longitude, timestamp: Date.now() },
+            { latitude: locLat, longitude: locLng, timestamp: Date.now() }
+          );
+          if (dist > 1000) {
+            Alert.alert(
+              'Too Far from Patrol Area',
+              `You are ${Math.round(dist)}m from "${assignedLoc.name}". You must be within 1 km to start a patrol.`
+            );
+            return;
+          }
+        }
+      }
+      // ---- end client-side pre-check ----
+
       const orgId = storedUserData.invite_code || null;
       const now = new Date().toISOString();
       let newPatrolId: string;
+
+      const patrolBody: Record<string, unknown> = {
+        start_time: now,
+        user_id: storedUserData.id,
+        organization_id: orgId,
+      };
+      if (currentLocation) {
+        patrolBody.current_latitude = currentLocation.latitude;
+        patrolBody.current_longitude = currentLocation.longitude;
+      }
 
       try {
         // Create patrol record in Directus
@@ -1419,32 +1452,49 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({
-            start_time: now,
-            user_id: storedUserData.id,
-            organization_id: orgId,
-          }),
+          body: JSON.stringify(patrolBody),
         });
 
         if (response.ok) {
           const data = await response.json();
           newPatrolId = data.data?.id || data.id;
+        } else if (response.status === 403) {
+          const errData = await response.json().catch(() => ({}));
+          const msg = errData?.message || 'You are too far from your assigned patrol location.';
+          Alert.alert('Cannot Start Patrol', msg);
+          return;
         } else {
           throw new Error(`Server responded with ${response.status}`);
         }
       } catch (error) {
         // Offline fallback: use temp ID and queue the creation
         console.warn('[Offline] Starting patrol offline, will sync later:', error);
+
+        // Client-side geofence check for offline case
+        if (assignedLoc && assignedLoc.latitude != null && assignedLoc.longitude != null) {
+          const locLat = Number(assignedLoc.latitude);
+          const locLng = Number(assignedLoc.longitude);
+          if (Number.isFinite(locLat) && Number.isFinite(locLng) && currentLocation) {
+            const dist = distanceBetweenCoordinatesMeters(
+              { latitude: currentLocation.latitude, longitude: currentLocation.longitude, timestamp: Date.now() },
+              { latitude: locLat, longitude: locLng, timestamp: Date.now() }
+            );
+            if (dist > 1000) {
+              Alert.alert(
+                'Too Far from Patrol Area',
+                `You are ${Math.round(dist)}m from "${assignedLoc.name}". You must be within 1 km to start a patrol.`
+              );
+              return;
+            }
+          }
+        }
+
         newPatrolId = `temp_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
         await enqueue({
           type: 'create_patrol',
           endpoint: '/patrols',
           method: 'POST',
-          body: {
-            start_time: now,
-            user_id: storedUserData.id,
-            organization_id: orgId,
-          },
+          body: patrolBody,
           localPatrolId: newPatrolId,
         });
       }

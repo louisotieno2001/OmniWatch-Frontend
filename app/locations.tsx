@@ -24,6 +24,8 @@ interface LocationData {
   id: string;
   name: string;
   assigned_areas?: string;
+  latitude?: number | null;
+  longitude?: number | null;
 }
 
 export default function LocationsScreen() {
@@ -36,6 +38,8 @@ export default function LocationsScreen() {
   const [selectedLocation, setSelectedLocation] = useState<LocationData | null>(null);
   const [editName, setEditName] = useState('');
   const [editAreas, setEditAreas] = useState('');
+  const [editLat, setEditLat] = useState('');
+  const [editLng, setEditLng] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [deletingId, setDeletingId] = useState('');
 
@@ -96,6 +100,8 @@ export default function LocationsScreen() {
     setSelectedLocation(location);
     setEditName(location.name || '');
     setEditAreas(location.assigned_areas || '');
+    setEditLat(location.latitude != null ? String(location.latitude) : '');
+    setEditLng(location.longitude != null ? String(location.longitude) : '');
     setIsEditVisible(true);
   };
 
@@ -106,6 +112,23 @@ export default function LocationsScreen() {
     if (!name) {
       Alert.alert('Validation Error', 'Location name is required.');
       return;
+    }
+
+    const latStr = editLat.trim();
+    const lngStr = editLng.trim();
+    let lat: number | null = null;
+    let lng: number | null = null;
+    if (latStr || lngStr) {
+      if (!latStr || !lngStr) {
+        Alert.alert('Validation Error', 'Both latitude and longitude are required if providing coordinates.');
+        return;
+      }
+      lat = Number(latStr);
+      lng = Number(lngStr);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+        Alert.alert('Validation Error', 'Invalid coordinates. Latitude -90 to 90, longitude -180 to 180.');
+        return;
+      }
     }
 
     try {
@@ -120,6 +143,8 @@ export default function LocationsScreen() {
         body: JSON.stringify({
           name,
           assigned_areas: editAreas.trim(),
+          latitude: lat,
+          longitude: lng,
         }),
       });
 
@@ -189,6 +214,11 @@ export default function LocationsScreen() {
       <Text style={styles.locationAreas}>
         Areas: {item.assigned_areas?.trim() ? item.assigned_areas : 'No areas assigned'}
       </Text>
+      {(item.latitude != null && item.longitude != null) ? (
+        <Text style={styles.locationCoords}>
+          GPS: {Number(item.latitude).toFixed(6)}, {Number(item.longitude).toFixed(6)}
+        </Text>
+      ) : null}
       <View style={styles.actionsRow}>
         <TouchableOpacity style={styles.editBtn} onPress={() => openEditModal(item)}>
           <Ionicons name="create-outline" size={16} color="#fff" />
@@ -287,6 +317,26 @@ export default function LocationsScreen() {
               placeholderTextColor="#64748b"
               multiline
             />
+
+            <Text style={styles.inputLabel}>GPS Coordinates (optional)</Text>
+            <View style={styles.coordRow}>
+              <TextInput
+                style={[styles.input, styles.coordInput]}
+                value={editLat}
+                onChangeText={setEditLat}
+                placeholder="Latitude"
+                placeholderTextColor="#64748b"
+                keyboardType="numeric"
+              />
+              <TextInput
+                style={[styles.input, styles.coordInput]}
+                value={editLng}
+                onChangeText={setEditLng}
+                placeholder="Longitude"
+                placeholderTextColor="#64748b"
+                keyboardType="numeric"
+              />
+            </View>
 
             <View style={styles.modalActions}>
               <TouchableOpacity style={styles.cancelBtn} onPress={() => setIsEditVisible(false)}>
@@ -518,6 +568,26 @@ const styles = StyleSheet.create({
   saveText: {
     color: '#fff',
     fontWeight: '600',
+  },
+  coordRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 4,
+  },
+  coordInput: {
+    flex: 1,
+    backgroundColor: '#1e293b',
+    color: '#fff',
+    borderWidth: 1,
+    borderColor: '#334155',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  locationCoords: {
+    color: '#94a3b8',
+    fontSize: 12,
+    marginBottom: 12,
   },
   disabledBtn: {
     opacity: 0.7,
