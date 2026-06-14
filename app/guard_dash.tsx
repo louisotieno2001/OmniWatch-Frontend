@@ -2500,22 +2500,21 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
               facing="back"
               onBarcodeScanned={handleBarcodeScanned}
               barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
-            >
-              <View style={styles.qrScannerOverlay}>
-                <Text style={styles.qrScannerTitle}>Scan Checkpoint QR Code</Text>
-                <View style={styles.qrScannerFrame} />
-                <Text style={styles.qrScannerHint}>Point camera at the checkpoint QR code</Text>
-                <TouchableOpacity
-                  style={styles.qrScannerCancel}
-                  onPress={() => {
-                    setQrScannerVisible(false);
-                    setScanningEnabled(true);
-                  }}
-                >
-                  <Ionicons name="close" size={28} color="#fff" />
-                </TouchableOpacity>
-              </View>
-            </CameraView>
+            />
+            <View style={styles.qrScannerOverlay}>
+              <Text style={styles.qrScannerTitle}>Scan Checkpoint QR Code</Text>
+              <View style={styles.qrScannerFrame} />
+              <Text style={styles.qrScannerHint}>Point camera at the checkpoint QR code</Text>
+              <TouchableOpacity
+                style={styles.qrScannerCancel}
+                onPress={() => {
+                  setQrScannerVisible(false);
+                  setScanningEnabled(true);
+                }}
+              >
+                <Ionicons name="close" size={28} color="#fff" />
+              </TouchableOpacity>
+            </View>
           </View>
         )}
       </Modal>
@@ -3705,7 +3704,11 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   qrScannerOverlay: {
-    flex: 1,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: 'rgba(0,0,0,0.3)',
