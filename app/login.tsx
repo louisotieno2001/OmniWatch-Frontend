@@ -127,7 +127,7 @@ export default function LoginScreen() {
       }
     } catch (error: any) {
       console.error('Login error:', error);
-      showToast(`Connection Error, Unable to connect to the server at ${API_URL}. Please check your internet connection and try again.`, 'error'
+      showToast(`Connection Error, Unable to connect to the server at the moment. Please check your internet connection and try again.`, 'error'
       );
     } finally {
       setIsLoading(false);
