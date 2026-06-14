@@ -22,6 +22,7 @@ import {
 } from './utils/permissions';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Constants from 'expo-constants';
+import CustomToast, { type ToastType } from '@/components/CustomToast';
 import { getUserSession, clearUserSession, touchLastActive } from './services/auth.storage';
 import {
   configureForegroundNotificationHandling,
@@ -128,6 +129,11 @@ interface SessionUserData {
 export default function AdminDashboard() {
   const router = useRouter();
   const [phonePermission, setPhonePermission] = useState(true);
+  const [toast, setToast] = useState<{ visible: boolean; message: string; type: ToastType }>({
+    visible: false,
+    message: '',
+    type: 'success',
+  });
   const [activeTab, setActiveTab] = useState<'guards' | 'patrols' | 'details' | 'logs' | 'settings'>('guards');
   const LOG_TIME_FILTER_OPTIONS = ['all', '1h', '24h', '7d', '30d'] as const;
   type LogTimeFilter = typeof LOG_TIME_FILTER_OPTIONS[number];
@@ -257,7 +263,7 @@ export default function AdminDashboard() {
       router.replace('/login');
     } catch (error: any) {
       console.error('[AdminDash] Logout error:', error.message || error);
-      Alert.alert('Error', 'Failed to logout. Please try again.');
+      showToast('Failed to logout. Please try again.', 'error');
     }
   };
 
@@ -570,7 +576,7 @@ export default function AdminDashboard() {
         await fetchAllData(token);
       } catch (error: any) {
         console.error('[AdminDash] Error loading session:', error.message || error);
-        Alert.alert('Error', 'Failed to load user data. Please login again.');
+        showToast('Failed to load user data. Please login again.', 'error');
         router.replace('/login');
       } finally {
         setIsLoading(false);
@@ -823,7 +829,7 @@ export default function AdminDashboard() {
 
   const handleCallGuard = async (phone?: string) => {
     if (!phone || !phone.trim()) {
-      Alert.alert('No Phone Number', 'This guard does not have a phone number.');
+      showToast('This guard does not have a phone number.', 'error');
       return;
     }
 
@@ -834,16 +840,13 @@ export default function AdminDashboard() {
       await Linking.openURL(url);
     } catch (error) {
       console.error('[AdminDash] Call failed:', error);
-      Alert.alert(
-        'Call Failed', 
-        'Could not open the phone dialer. Your device might not support this feature.'
-      );
+      showToast('Could not open the phone dialer.', 'error');
     }
   };
 
   const handleMessageGuard = async (phone?: string) => {
     if (!phone || !phone.trim()) {
-      Alert.alert('No Phone Number', 'This guard does not have a phone number.');
+      showToast('This guard does not have a phone number.', 'error');
       return;
     }
     const sanitized = phone.replace(/[^\d+]/g, '');
@@ -852,7 +855,7 @@ export default function AdminDashboard() {
       await Linking.openURL(url);
     } catch (error) {
       console.error('[AdminDash] SMS failed:', error);
-      Alert.alert('Unavailable', 'SMS is not available on this device.');
+      showToast('SMS is not available on this device.', 'error');
     }
   };
 
@@ -891,7 +894,7 @@ export default function AdminDashboard() {
 
   const handleViewRoute = (patrol: Patrol) => {
     if (!patrol.routeCoordinates || patrol.routeCoordinates.length === 0) {
-      Alert.alert('No Route Data', 'No recorded coordinates were found for this patrol.');
+      showToast('No recorded coordinates were found for this patrol.', 'error');
       return;
     }
     setSelectedRouteCoordinates(patrol.routeCoordinates);
@@ -1309,6 +1312,10 @@ export default function AdminDashboard() {
       </View>
     </ScrollView>
   );
+
+  const showToast = (message: string, type: ToastType) => {
+    setToast({ visible: true, message, type });
+  };
 
   // Show loading screen while fetching data
   if (isLoading) {
@@ -1824,6 +1831,12 @@ export default function AdminDashboard() {
           </View>
         </View>
       </Modal>
+        <CustomToast
+          visible={toast.visible}
+          message={toast.message}
+          type={toast.type}
+          onHide={() => setToast((prev) => ({ ...prev, visible: false }))}
+        />
     </SafeAreaView>
   );
 }

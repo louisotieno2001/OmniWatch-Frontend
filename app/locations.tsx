@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { getUserSession } from './services/auth.storage';
+import { CustomToast, type ToastType } from '@/components/CustomToast';
 
 const API_URL = Constants.expoConfig?.extra?.apiUrl;
 
@@ -42,6 +43,11 @@ export default function LocationsScreen() {
   const [editLng, setEditLng] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [deletingId, setDeletingId] = useState('');
+  const [toast, setToast] = useState<{ visible: boolean; message: string; type: ToastType }>({
+    visible: false,
+    message: '',
+    type: 'success',
+  });
 
   const getAuthToken = async () => {
     const { token } = await getUserSession();
@@ -49,6 +55,10 @@ export default function LocationsScreen() {
       throw new Error('Session expired');
     }
     return token;
+  };
+
+  const showToast = (message: string, type: ToastType) => {
+    setToast({ visible: true, message, type });
   };
 
   const fetchLocations = useCallback(async (isRefresh = false) => {
@@ -110,7 +120,7 @@ export default function LocationsScreen() {
 
     const name = editName.trim();
     if (!name) {
-      Alert.alert('Validation Error', 'Location name is required.');
+      showToast('Location name is required.', 'error');
       return;
     }
 
@@ -120,13 +130,13 @@ export default function LocationsScreen() {
     let lng: number | null = null;
     if (latStr || lngStr) {
       if (!latStr || !lngStr) {
-        Alert.alert('Validation Error', 'Both latitude and longitude are required if providing coordinates.');
+        showToast('Both latitude and longitude are required if providing coordinates.', 'error');
         return;
       }
       lat = Number(latStr);
       lng = Number(lngStr);
       if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
-        Alert.alert('Validation Error', 'Invalid coordinates. Latitude -90 to 90, longitude -180 to 180.');
+        showToast('Invalid coordinates. Latitude -90 to 90, longitude -180 to 180.', 'error');
         return;
       }
     }
@@ -156,9 +166,9 @@ export default function LocationsScreen() {
       setIsEditVisible(false);
       setSelectedLocation(null);
       await fetchLocations(true);
-      Alert.alert('Success', 'Location updated successfully.');
+      showToast('Location updated successfully.', 'success');
     } catch (err: any) {
-      Alert.alert('Update Failed', err?.message || 'Failed to update location.');
+      showToast(err?.message || 'Failed to update location.', 'error');
     } finally {
       setIsSaving(false);
     }
@@ -191,9 +201,9 @@ export default function LocationsScreen() {
               }
 
               await fetchLocations(true);
-              Alert.alert('Success', 'Location deleted successfully.');
+              showToast('Location deleted successfully.', 'success');
             } catch (err: any) {
-              Alert.alert('Delete Failed', err?.message || 'Failed to delete location.');
+              showToast(err?.message || 'Failed to delete location.', 'error');
             } finally {
               setDeletingId('');
             }
@@ -357,6 +367,12 @@ export default function LocationsScreen() {
           </View>
         </View>
       </Modal>
+      <CustomToast
+        visible={toast.visible}
+        message={toast.message}
+        type={toast.type}
+        onHide={() => setToast((prev) => ({ ...prev, visible: false }))}
+      />
     </SafeAreaView>
   );
 }

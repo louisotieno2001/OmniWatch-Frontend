@@ -21,6 +21,7 @@ import {
   getPhonePermissionStatus,
   requestPhonePermission,
 } from './utils/permissions';
+import { CustomToast, type ToastType } from '@/components/CustomToast';
 
 const API_URL = Constants.expoConfig?.extra?.apiUrl;
 
@@ -42,6 +43,11 @@ export default function ManageGuardsScreen() {
   const [error, setError] = useState('');
   const [removingId, setRemovingId] = useState('');
   const [phonePermission, setPhonePermission] = useState<boolean | null>(null);
+  const [toast, setToast] = useState<{ visible: boolean; message: string; type: ToastType }>({
+    visible: false,
+    message: '',
+    type: 'success',
+  });
 
   const getToken = async () => {
     const { token } = await getUserSession();
@@ -110,7 +116,7 @@ export default function ManageGuardsScreen() {
 
   const handleCall = async (phone?: string) => {
     if (!phone || !phone.trim()) {
-      Alert.alert('No Phone Number', 'This guard does not have a phone number.');
+      showToast('This guard does not have a phone number.', 'error');
       return;
     }
 
@@ -123,10 +129,7 @@ export default function ManageGuardsScreen() {
       await Linking.openURL(url);
     } catch (error) {
       console.error('[ManageGuards] Call failed:', error);
-      Alert.alert(
-        'Call Failed', 
-        'Could not open the phone dialer. Your device might not support this feature.'
-      );
+      showToast('Could not open the phone dialer.', 'error');
     }
   };
 
@@ -158,9 +161,9 @@ export default function ManageGuardsScreen() {
               }
 
               await fetchGuards(true);
-              Alert.alert('Success', 'Guard removed successfully.');
+              showToast('Guard removed successfully.', 'success');
             } catch (err: any) {
-              Alert.alert('Remove Failed', err?.message || 'Failed to remove guard.');
+              showToast(err?.message || 'Failed to remove guard.', 'error');
             } finally {
               setRemovingId('');
             }
@@ -223,6 +226,10 @@ export default function ManageGuardsScreen() {
     );
   };
 
+  const showToast = (message: string, type: ToastType) => {
+    setToast({ visible: true, message, type });
+  };
+
   return (
     <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
       <View style={styles.header}>
@@ -276,7 +283,13 @@ export default function ManageGuardsScreen() {
           }
         />
       )}
-    </SafeAreaView>
+        <CustomToast
+          visible={toast.visible}
+          message={toast.message}
+          type={toast.type}
+          onHide={() => setToast((prev) => ({ ...prev, visible: false }))}
+        />
+      </SafeAreaView>
   );
 }
 

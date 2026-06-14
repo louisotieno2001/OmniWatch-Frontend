@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
-export type ToastType = 'success' | 'error';
+export type ToastType = 'success' | 'error' | 'info';
 
 interface CustomToastProps {
   visible: boolean;
@@ -33,7 +33,7 @@ export default function CustomToast({
 
   return (
     <View style={styles.wrapper} pointerEvents="none">
-      <View style={[styles.toast, type === 'success' ? styles.success : styles.error]}>
+      <View style={[styles.toast, type === 'success' ? styles.success : type === 'error' ? styles.error : styles.info]}>
         <Text style={styles.text}>{message}</Text>
       </View>
     </View>
@@ -63,6 +63,10 @@ const styles = StyleSheet.create({
   error: {
     backgroundColor: '#7f1d1d',
     borderColor: '#f87171',
+  },
+  info: {
+    backgroundColor: '#1e3a5f',
+    borderColor: '#60a5fa',
   },
   text: {
     color: '#ffffff',

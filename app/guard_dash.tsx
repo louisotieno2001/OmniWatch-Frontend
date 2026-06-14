@@ -24,6 +24,7 @@ import Constants from 'expo-constants';
 import { getUserSession, clearUserSession, touchLastActive } from './services/auth.storage';
 import { enqueue, processQueue } from './services/offline.queue';
 import { useNetworkStatus } from './services/network';
+import CustomToast, { type ToastType } from '@/components/CustomToast';
 import {
   recordScan,
   isOnCooldown,
@@ -482,6 +483,12 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
 
   const { isOnline } = useNetworkStatus();
 
+  const [toast, setToast] = useState<{ visible: boolean; message: string; type: ToastType }>({
+    visible: false,
+    message: '',
+    type: 'success',
+  });
+
   useEffect(() => {
     if (isOnline) {
       (async () => {
@@ -630,7 +637,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
 
       const permissionGranted = await ensureForegroundPermission();
       if (!permissionGranted) {
-        Alert.alert('Permission Denied', 'Location permission is required for patrol tracking.');
+        showToast('Location permission is required for patrol tracking.', 'error');
         return;
       }
 
@@ -836,7 +843,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
       await fetchLogs();
     } catch (error) {
       console.error('Error loading session:', error);
-      Alert.alert('Error', 'Failed to load user data. Please login again.');
+      showToast('Failed to load user data. Please login again.', 'error');
       router.replace('/login');
     } finally {
       setIsLoading(false);
@@ -997,7 +1004,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
   // Create a new log entry
   const createLog = async () => {
     if (!newLogTitle.trim() || !newLogDescription.trim()) {
-      Alert.alert('Error', 'Please enter a title and description');
+      showToast('Please enter a title and description.', 'error');
       return;
     }
 
@@ -1005,7 +1012,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
     const { token } = await getUserSession();
 
     if (!token) {
-      Alert.alert('Error', 'Session not found. Please login again.');
+      showToast('Session not found. Please login again.', 'error');
       setIsSubmittingLog(false);
       return;
     }
@@ -1029,12 +1036,12 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
       });
 
       if (response.ok) {
-        Alert.alert('Success', 'Log created successfully');
+        showToast('Log created successfully.', 'success');
         resetLogForm();
         await fetchLogs();
       } else {
         const errorData = await response.json();
-        Alert.alert('Error', errorData.message || 'Failed to create log');
+        showToast(errorData.message || 'Failed to create log.', 'error');
       }
     } catch (error) {
       // Offline fallback: queue the log
@@ -1046,7 +1053,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
         body: logBody,
         localPatrolId: patrolId?.startsWith('temp_') ? patrolId : undefined,
       });
-      Alert.alert('Log Saved Offline', 'Your log will be submitted when internet connection is restored.');
+      showToast('Log saved offline. Will sync when reconnected.', 'info');
       resetLogForm();
     } finally {
       setIsSubmittingLog(false);
@@ -1063,7 +1070,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
     try {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permission Required', 'Please grant camera roll permissions to add images.');
+        showToast('Please grant camera roll permissions to add images.', 'error');
         return;
       }
 
@@ -1082,12 +1089,12 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
           setSelectedImages(prev => [...prev, `data:image/jpeg;base64,${image.base64}`]);
         } else {
           // For local URIs, we'll need to handle differently
-          Alert.alert('Info', 'Image selected. Note: For best results, please use base64 images.');
+          showToast('Image selected.', 'info');
         }
       }
     } catch (error) {
       console.error('Error picking image:', error);
-      Alert.alert('Error', 'Failed to pick image. Please try again.');
+      showToast('Failed to pick image. Please try again.', 'error');
     }
   };
 
@@ -1096,7 +1103,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
     try {
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permission Required', 'Please grant camera permissions to take photos.');
+        showToast('Please grant camera permissions to take photos.', 'error');
         return;
       }
 
@@ -1112,12 +1119,12 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
         if (image.base64) {
           setSelectedImages(prev => [...prev, `data:image/jpeg;base64,${image.base64}`]);
         } else {
-          Alert.alert('Info', 'Photo taken. Note: For best results, please use base64 images.');
+          showToast('Photo taken.', 'info');
         }
       }
     } catch (error) {
       console.error('Error taking photo:', error);
-      Alert.alert('Error', 'Failed to take photo. Please try again.');
+      showToast('Failed to take photo. Please try again.', 'error');
     }
   };
 
@@ -1223,7 +1230,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
     setLogoutModalVisible(false);
 
     if (isRecording || patrolId) {
-      Alert.alert('Patrol Ongoing', 'You cannot logout while on patrol. End the patrol first.');
+      showToast('End the patrol before logging out.', 'error');
       return;
     }
 
@@ -1243,7 +1250,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
         if (!response.ok) {
           const payload = await response.json().catch(() => null);
           if (response.status === 409 || payload?.code === 'ACTIVE_PATROL_LOGOUT_BLOCKED') {
-            Alert.alert('Patrol Ongoing', payload?.message || 'End the active patrol before logout.');
+            showToast(payload?.message || 'End the patrol before logging out.', 'error');
             return;
           }
           throw new Error(payload?.message || `Logout failed (${response.status})`);
@@ -1260,7 +1267,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
       router.replace('/login');
     } catch (error) {
       console.error('Logout error:', error);
-      Alert.alert('Error', 'Failed to logout. Please try again.');
+      showToast('Failed to logout. Please try again.', 'error');
     }
   };
 
@@ -1362,10 +1369,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
                   const patchData = await patchResponse.json();
                   if (patchData?.warning === 'duration_not_saved') {
                     console.warn('Duration was not persisted:', patchData?.details);
-                    Alert.alert(
-                      'Patrol Saved With Warning',
-                      'Patrol end time/map saved, but duration could not be persisted. Check backend field configuration for duration.'
-                    );
+                    showToast('Patrol saved with warning: duration not persisted.', 'info');
                   }
 
                   await AsyncStorage.removeItem(ONGOING_PATROL_STORAGE_KEY);
@@ -1405,7 +1409,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
       // Start recording
       const { token, userData: storedUserData } = await getUserSession();
       if (!token || !storedUserData) {
-        Alert.alert('Error', 'Session not found. Please login again.');
+        showToast('Session not found. Please login again.', 'error');
         return;
       }
 
@@ -1420,10 +1424,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
             { latitude: locLat, longitude: locLng, timestamp: Date.now() }
           );
           if (dist > 1000) {
-            Alert.alert(
-              'Too Far from Patrol Area',
-              `You are ${Math.round(dist)}m from "${assignedLoc.name}". You must be within 1 km to start a patrol.`
-            );
+            showToast(`Too far from "${assignedLoc.name}". Must be within 1km.`, 'error');
             return;
           }
         }
@@ -1461,7 +1462,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
         } else if (response.status === 403) {
           const errData = await response.json().catch(() => ({}));
           const msg = errData?.message || 'You are too far from your assigned patrol location.';
-          Alert.alert('Cannot Start Patrol', msg);
+          showToast(msg, 'error');
           return;
         } else {
           throw new Error(`Server responded with ${response.status}`);
@@ -1480,10 +1481,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
               { latitude: locLat, longitude: locLng, timestamp: Date.now() }
             );
             if (dist > 1000) {
-              Alert.alert(
-                'Too Far from Patrol Area',
-                `You are ${Math.round(dist)}m from "${assignedLoc.name}". You must be within 1 km to start a patrol.`
-              );
+              showToast(`Too far from "${assignedLoc.name}". Must be within 1km.`, 'error');
               return;
             }
           }
@@ -1528,10 +1526,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
       // Start location tracking
       const backgroundStarted = await startBackgroundLocationTracking();
       if (!backgroundStarted) {
-        Alert.alert(
-          'Background Tracking Disabled',
-          'Background location permission was not granted. Coordinates will only sync while the app is open.'
-        );
+        showToast('Background tracking disabled. Location syncs while app is open.', 'info');
       }
       startLocationTracking();
     }
@@ -1565,7 +1560,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
         body: checkpointBody,
         localPatrolId: patrolId?.startsWith('temp_') ? patrolId : undefined,
       });
-      Alert.alert('Checkpoint Saved Offline', `Area: ${area}\nNote: ${note || 'None'}\nWill sync when online.`);
+      showToast('Checkpoint saved offline. Will sync when online.', 'info');
       return;
     }
 
@@ -1580,7 +1575,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
       });
 
       if (response.ok) {
-        Alert.alert('Checkpoint Logged', `Area: ${area}\nNote: ${note || 'None'}`);
+        showToast('Checkpoint logged.', 'success');
         await fetchLogs();
         return;
       }
@@ -1593,21 +1588,21 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
         body: checkpointBody,
         localPatrolId: patrolId?.startsWith('temp_') ? patrolId : undefined,
       });
-      Alert.alert('Checkpoint Saved Offline', `Area: ${area}\nNote: ${note || 'None'}\nWill sync when online.`);
+      showToast('Checkpoint saved offline. Will sync when online.', 'info');
     }
   };
 
   // Open QR scanner
   const openQrScanner = async () => {
     if (!isRecording) {
-      Alert.alert('Start Patrol', 'Start a patrol before scanning checkpoints.');
+      showToast('Start a patrol before scanning checkpoints.', 'error');
       return;
     }
 
     if (!cameraPermission?.granted) {
       const result = await requestCameraPermission();
       if (!result.granted) {
-        Alert.alert('Camera Permission', 'Camera permission is required to scan QR codes.');
+        showToast('Camera permission is required to scan QR codes.', 'error');
         return;
       }
     }
@@ -1630,7 +1625,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
     } catch {}
 
     if (!area) {
-      Alert.alert('Invalid QR', 'This QR code does not contain valid checkpoint data.');
+      showToast('Invalid QR code.', 'error');
       setScanningEnabled(true);
       return;
     }
@@ -1639,10 +1634,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
     const cooldown = await isOnCooldown(area);
     if (cooldown) {
       const remaining = await getMinutesRemainingOnCooldown(area);
-      Alert.alert(
-        'Checkpoint Too Soon',
-        `"${area}" was already scanned recently. Please wait ${remaining} minute${remaining !== 1 ? 's' : ''} before scanning again.`
-      );
+      showToast(`"${area}" scanned recently. Wait ${remaining} min.`, 'info');
       setScanningEnabled(true);
       return;
     }
@@ -1703,7 +1695,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
         body: checkpointBody,
         localPatrolId: patrolId?.startsWith('temp_') ? patrolId : undefined,
       });
-      Alert.alert('Checkpoint Saved Offline', `QR Checkpoint: ${area}\nWill sync when online.`);
+      showToast('Checkpoint saved offline. Will sync when online.', 'info');
       return;
     }
 
@@ -1718,7 +1710,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
       });
 
       if (response.ok) {
-        Alert.alert('Checkpoint Logged', `QR Checkpoint: ${area}${scannedQrNote.trim() ? `\nNote: ${scannedQrNote.trim()}` : ''}`);
+        showToast('Checkpoint logged.', 'success');
         await fetchLogs();
         return;
       }
@@ -1731,7 +1723,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
         body: checkpointBody,
         localPatrolId: patrolId?.startsWith('temp_') ? patrolId : undefined,
       });
-      Alert.alert('Checkpoint Saved Offline', `QR Checkpoint: ${area}\nWill sync when online.`);
+      showToast('Checkpoint saved offline. Will sync when online.', 'info');
     }
   };
 
@@ -1812,7 +1804,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
     try {
       const { token } = await getUserSession();
       if (!token) {
-        Alert.alert('Error', 'Session not found. Please login again.');
+        showToast('Session not found. Please login again.', 'error');
         return;
       }
 
@@ -1835,14 +1827,14 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
       if (response.ok) {
         setGuardProfile(editableProfile);
         setIsEditing(false);
-        Alert.alert('Success', 'Profile updated successfully');
+        showToast('Profile updated successfully.', 'success');
       } else {
         const errorData = await response.json();
-        Alert.alert('Error', errorData.message || 'Failed to update profile');
+        showToast(errorData.message || 'Failed to update profile.', 'error');
       }
     } catch (error) {
       console.error('Error updating profile:', error);
-      Alert.alert('Error', 'Failed to update profile. Please try again.');
+      showToast('Failed to update profile. Please try again.', 'error');
     }
   };
 
@@ -2325,6 +2317,10 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
       </TouchableOpacity>
     </ScrollView>
   );
+
+  const showToast = (message: string, type: ToastType) => {
+    setToast({ visible: true, message, type });
+  };
 
   // Show loading screen while fetching session data
   if (isLoading) {
@@ -2840,6 +2836,13 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
           </View>
         </View>
       </Modal>
+
+      <CustomToast
+        visible={toast.visible}
+        message={toast.message}
+        type={toast.type}
+        onHide={() => setToast((prev) => ({ ...prev, visible: false }))}
+      />
     </SafeAreaView>
   );
 }
