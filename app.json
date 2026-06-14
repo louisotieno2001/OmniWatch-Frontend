@@ -7,10 +7,11 @@
     "icon": "./assets/images/icon.png",
     "scheme": "patrollink",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "googleMapsApiKey": "",
+      "config": {
+        "googleMapsApiKey": ""
+      },
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "PatrolLink uses your location to track active patrol routes.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "PatrolLink keeps updating location during active patrols, even in the background.",
@@ -47,7 +48,6 @@
         "foregroundImage": "./assets/images/icon.png",
         "monochromeImage": "./assets/images/icon.png"
       },
-      "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "intentFilters": [
         {
@@ -72,6 +72,11 @@
     "plugins": [
       "expo-router",
       "expo-notifications",
+      "expo-font",
+      "expo-image",
+      "expo-secure-store",
+      "expo-status-bar",
+      "expo-web-browser",
       [
         "expo-location",
         {

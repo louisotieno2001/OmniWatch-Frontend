@@ -1,8 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from '@react-navigation/native';
 import Constants from 'expo-constants';
-import { useRouter } from 'expo-router';
-import React, { useCallback, useMemo, useState } from 'react';
+import { useRouter, useFocusEffect } from 'expo-router';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
