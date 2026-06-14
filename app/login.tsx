@@ -59,9 +59,9 @@ export default function LoginScreen() {
     }
 
     // Password validation: at least 8 characters, with uppercase, lowercase, digit, special character
-    const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
+    const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{}|;':",.\/<>?~])[A-Za-z\d!@#$%^&*()_+\-=\[\]{}|;':",.\/<>?~]{8,}$/;
     if (!passwordRegex.test(password)) {
-      setPasswordError('Password must be at least 8 characters long and include at least one uppercase letter, one lowercase letter, one digit, and one special character (@$!%*?&)');
+      setPasswordError('Password must be at least 8 characters long and include at least one uppercase letter, one lowercase letter, one digit, and one allowed special character');
       return;
     }
 

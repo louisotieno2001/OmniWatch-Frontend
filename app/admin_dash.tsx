@@ -22,7 +22,7 @@ import {
 } from './utils/permissions';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Constants from 'expo-constants';
-import { getUserSession, clearUserSession } from './services/auth.storage';
+import { getUserSession, clearUserSession, touchLastActive } from './services/auth.storage';
 import {
   configureForegroundNotificationHandling,
   registerAdminPushToken,
@@ -45,7 +45,6 @@ interface Guard {
     end: string;
   };
   phone: string;
-  email: string;
   joinDate: string;
 }
 
@@ -101,7 +100,6 @@ interface AdminProfile {
   id: string;
   company: string;
   role: string;
-  email: string;
   phone: string;
   joinDate: string;
   managedGuards: number;
@@ -120,7 +118,6 @@ interface SessionUserData {
   id: string;
   first_name: string;
   last_name: string;
-  email: string;
   phone: string;
   role: string;
   invite_code?: string;
@@ -182,7 +179,6 @@ export default function AdminDashboard() {
     id: '',
     company: '',
     role: 'Security Supervisor',
-    email: '',
     phone: '',
     joinDate: new Date().toISOString(),
     managedGuards: 0,
@@ -294,6 +290,8 @@ export default function AdminDashboard() {
           return;
         }
 
+        touchLastActive();
+
         setAdminProfile(prev => ({
           ...prev,
           name: `${typedUserData.first_name || ''} ${typedUserData.last_name || ''}`.trim() || 'Admin Supervisor',
@@ -350,7 +348,6 @@ export default function AdminDashboard() {
                     end: guard.operating_hours_end || '17:00',
                   },
                   phone: guard.phone || '',
-                  email: guard.email || '',
                   joinDate: guard.date_created ? new Date(guard.date_created).toISOString() : new Date().toISOString(),
                 }));
                 
@@ -1467,10 +1464,6 @@ export default function AdminDashboard() {
                   <View style={styles.detailSection}>
                     <Text style={styles.detailSectionTitle}>Contact Information</Text>
                     <View style={styles.detailRow}>
-                      <Ionicons name="mail" size={18} color="#64748b" />
-                      <Text style={styles.detailText}>{selectedGuard.email}</Text>
-                    </View>
-                    <View style={styles.detailRow}>
                       <Ionicons name="call" size={18} color="#64748b" />
                       <Text style={styles.detailText}>{selectedGuard.phone}</Text>
                     </View>
@@ -1604,10 +1597,6 @@ export default function AdminDashboard() {
                   <TouchableOpacity style={styles.modalActionButton} onPress={() => handleViewRoute(selectedPatrol)}>
                     <Ionicons name="map" size={20} color="#fff" />
                     <Text style={styles.modalActionText}>View Route</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.modalActionButton}>
-                    <Ionicons name="document" size={20} color="#fff" />
-                    <Text style={styles.modalActionText}>Report</Text>
                   </TouchableOpacity>
                 </View>
               </>

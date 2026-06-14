@@ -1,9 +1,38 @@
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { getUserSession } from './services/auth.storage';
 
 export default function HomeScreen() {
   const router = useRouter();
+  const [checking, setChecking] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      const { token, userData } = await getUserSession();
+      if (token && userData?.role) {
+        const role = userData.role;
+        if (role === 'admin' || role === 'supervisor') {
+          router.replace('/admin_dash');
+        } else if (role === 'guard') {
+          router.replace('/guard_dash');
+        } else {
+          setChecking(false);
+        }
+      } else {
+        setChecking(false);
+      }
+    })();
+  }, []);
+
+  if (checking) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#4fa3ff" />
+      </View>
+    );
+  }
 
   return (
     <ScrollView style={styles.container}>
@@ -74,12 +103,16 @@ function Feature({ icon, title, description }: { icon: string; title: string; de
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0f172a', // deep navy
+    backgroundColor: '#0f172a',
     paddingHorizontal: 20,
     paddingBottom: 20,
   },
-
-  /* Header */
+  loadingContainer: {
+    flex: 1,
+    backgroundColor: '#0f172a',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   header: {
     marginBottom: 30,
   },
@@ -93,8 +126,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginTop: 4,
   },
-
-  /* Hero */
   heroCard: {
     backgroundColor: '#111827',
     borderRadius: 18,
@@ -117,16 +148,12 @@ const styles = StyleSheet.create({
     marginTop: 8,
     lineHeight: 20,
   },
-
-  /* Sections */
   sectionTitle: {
     color: '#e2e8f0',
     fontSize: 18,
     fontWeight: '600',
     marginBottom: 14,
   },
-
-  /* Features */
   featuresGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -153,8 +180,6 @@ const styles = StyleSheet.create({
     marginTop: 6,
     lineHeight: 18,
   },
-
-  /* CTA */
   ctaCard: {
     backgroundColor: '#1e40af',
     borderRadius: 20,

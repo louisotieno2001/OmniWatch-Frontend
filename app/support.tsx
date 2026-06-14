@@ -110,7 +110,7 @@ export default function Support() {
         </TouchableOpacity>
         <View style={styles.headerText}>
           <Text style={styles.headerTitle}>Help & Support</Text>
-          <Text style={styles.headerSubtitle}>We're here to help</Text>
+          <Text style={styles.headerSubtitle}>We&lsquo;re here to help</Text>
         </View>
       </View>
 
@@ -229,15 +229,15 @@ export default function Support() {
           <Text style={styles.contactTitle}>Other Ways to Reach Us</Text>
           <View style={styles.contactRow}>
             <Ionicons name="mail-outline" size={20} color="#2563eb" />
-            <Text style={styles.contactText}>support@omniwatch.com</Text>
+            <Text style={styles.contactText}>info@hustlerati.com</Text>
           </View>
           <View style={styles.contactRow}>
             <Ionicons name="call-outline" size={20} color="#2563eb" />
-            <Text style={styles.contactText}>+1 (555) 123-4567</Text>
+            <Text style={styles.contactText}>+254746852485</Text>
           </View>
           <View style={styles.contactRow}>
             <Ionicons name="time-outline" size={20} color="#2563eb" />
-            <Text style={styles.contactText}>Mon-Fri: 9AM - 6PM</Text>
+            <Text style={styles.contactText}>24/7</Text>
           </View>
         </View>
       </ScrollView>

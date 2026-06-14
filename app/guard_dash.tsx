@@ -21,7 +21,7 @@ import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import { MapView, Marker, Polyline } from '../components/MapView';
 import Constants from 'expo-constants';
-import { getUserSession, clearUserSession } from './services/auth.storage';
+import { getUserSession, clearUserSession, touchLastActive } from './services/auth.storage';
 
 const API_URL = Constants.expoConfig?.extra?.apiUrl;
 
@@ -719,6 +719,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
       }
 
       setUserData(storedUserData);
+      touchLastActive();
 
       // Initialize guard profile from session data
       const initialProfile: GuardProfile = {
