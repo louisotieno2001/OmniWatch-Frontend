@@ -922,7 +922,7 @@ export default function AdminDashboard() {
         <View style={styles.statCard}>
           <Ionicons name="people" size={24} color="#2563eb" />
           <Text style={styles.statNumber}>{guards.length}</Text>
-          <Text style={styles.statLabel}>Total Guards</Text>
+          <Text style={styles.statLabel}>Guards</Text>
         </View>
         <View style={styles.statCard}>
           <Ionicons name="checkmark-circle" size={24} color="#22c55e" />
