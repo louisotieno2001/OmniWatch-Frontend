@@ -22,6 +22,8 @@ import * as TaskManager from 'expo-task-manager';
 import { MapView, Marker, Polyline } from '../components/MapView';
 import Constants from 'expo-constants';
 import { getUserSession, clearUserSession, touchLastActive } from './services/auth.storage';
+import { enqueue, processQueue } from './services/offline.queue';
+import { useNetworkStatus } from './services/network';
 
 const API_URL = Constants.expoConfig?.extra?.apiUrl;
 
@@ -459,6 +461,33 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
   const locationSubscription = useRef<Location.LocationSubscription | null>(null);
   const lastAcceptedForegroundPointRef = useRef<PatrolCoordinate | null>(null);
   const consecutiveForegroundMovementRef = useRef(0);
+
+  const { isOnline } = useNetworkStatus();
+
+  useEffect(() => {
+    if (isOnline) {
+      (async () => {
+        try {
+          const session = await getUserSession();
+          if (session.token) {
+            await processQueue(session.token, API_URL!);
+          }
+
+          // If the patrol ID was resolved from temp→real by the queue processor,
+          // reload it from AsyncStorage and update component state
+          const patrolRaw = await AsyncStorage.getItem(ONGOING_PATROL_STORAGE_KEY);
+          if (patrolRaw) {
+            const patrolData = JSON.parse(patrolRaw);
+            if (patrolData.patrolId && patrolData.patrolId !== patrolId) {
+              setPatrolId(patrolData.patrolId);
+            }
+          }
+        } catch (error) {
+          console.error('[OfflineSync] Queue processing error:', error);
+        }
+      })();
+    }
+  }, [isOnline]);
 
   const getElapsedSeconds = useCallback((startedAt: Date | null) => {
     if (!startedAt) return 0;
@@ -954,46 +983,53 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
       return;
     }
 
-    try {
-      setIsSubmittingLog(true);
-      const { token } = await getUserSession();
-      
-      if (!token) {
-        Alert.alert('Error', 'Session not found. Please login again.');
-        return;
-      }
+    setIsSubmittingLog(true);
+    const { token } = await getUserSession();
 
+    if (!token) {
+      Alert.alert('Error', 'Session not found. Please login again.');
+      setIsSubmittingLog(false);
+      return;
+    }
+
+    const logBody = {
+      title: newLogTitle.trim(),
+      description: newLogDescription.trim(),
+      category: newLogCategory,
+      patrol_id: patrolId,
+      images: selectedImages.length > 0 ? JSON.stringify(selectedImages) : null,
+    };
+
+    try {
       const response = await fetch(`${API_URL}/logs`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          title: newLogTitle.trim(),
-          description: newLogDescription.trim(),
-          category: newLogCategory,
-          patrol_id: patrolId,
-          images: selectedImages.length > 0 ? JSON.stringify(selectedImages) : null,
-        }),
+        body: JSON.stringify(logBody),
       });
 
       if (response.ok) {
-        // const data = await response.json();
         Alert.alert('Success', 'Log created successfully');
-        
-        // Reset form
         resetLogForm();
-        
-        // Refresh logs
         await fetchLogs();
       } else {
         const errorData = await response.json();
         Alert.alert('Error', errorData.message || 'Failed to create log');
       }
     } catch (error) {
-      console.error('Error creating log:', error);
-      Alert.alert('Error', 'Failed to create log. Please try again.');
+      // Offline fallback: queue the log
+      console.warn('[Offline] Queuing log for later sync:', error);
+      await enqueue({
+        type: 'create_log',
+        endpoint: '/logs',
+        method: 'POST',
+        body: logBody,
+        localPatrolId: patrolId?.startsWith('temp_') ? patrolId : undefined,
+      });
+      Alert.alert('Log Saved Offline', 'Your log will be submitted when internet connection is restored.');
+      resetLogForm();
     } finally {
       setIsSubmittingLog(false);
     }
@@ -1094,6 +1130,10 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
 
   // Send periodic location update to server
   const sendPeriodicLocationUpdate = useCallback(async () => {
+    if (!isOnline) {
+      return;
+    }
+
     await flushBufferedCoordinatesToServer(patrolId || undefined);
 
     if (!patrolId || locationData.length === 0) {
@@ -1135,7 +1175,7 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
     } catch (error) {
       console.error('Error sending periodic location update:', error);
     }
-  }, [patrolId, locationData]);
+  }, [patrolId, locationData, isOnline]);
 
   // Periodic location update effect
   useEffect(() => {
@@ -1263,45 +1303,44 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
             text: 'End Patrol',
             style: 'destructive',
             onPress: async () => {
-              try {
-                // Stop location tracking
-                stopLocationTracking();
-                await stopBackgroundLocationTracking(patrolId || undefined);
-                const finalDuration = getElapsedSeconds(startTime);
+              // Stop location tracking
+              stopLocationTracking();
+              await stopBackgroundLocationTracking(patrolId || undefined);
+              const finalDuration = getElapsedSeconds(startTime);
 
-                // Update patrol record in Directus
-                if (patrolId) {
-                  const { token } = await getUserSession();
-                  if (!token) {
-                    throw new Error('No auth token found while ending patrol');
-                  }
-                  const endTime = new Date().toISOString();
-                  const mapCoordinates = locationData.map((point) => ({
-                    latitude: point.latitude,
-                    longitude: point.longitude,
-                    timestamp: point.timestamp,
-                  }));
-                  const mapJson = JSON.stringify(mapCoordinates);
+              if (patrolId) {
+                const { token } = await getUserSession();
+                const endTime = new Date().toISOString();
+                const mapCoordinates = locationData.map((point) => ({
+                  latitude: point.latitude,
+                  longitude: point.longitude,
+                  timestamp: point.timestamp,
+                }));
+                const mapJson = JSON.stringify(mapCoordinates);
 
+                const patchBody = {
+                  organization_id: userData?.invite_code || null,
+                  user_id: userData?.id || null,
+                  duration: finalDuration,
+                  start_time: startTime?.toISOString() || null,
+                  end_time: endTime,
+                  map: mapJson,
+                };
+
+                try {
                   const patchResponse = await fetch(`${API_URL}/patrols/${patrolId}`, {
                     method: 'PATCH',
                     headers: {
                       'Authorization': `Bearer ${token}`,
                       'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({
-                      organization_id: userData?.invite_code || null,
-                      user_id: userData?.id || null,
-                      duration: finalDuration,
-                      start_time: startTime?.toISOString() || null,
-                      end_time: endTime,
-                      map: mapJson,
-                    }),
+                    body: JSON.stringify(patchBody),
                   });
+
                   if (!patchResponse.ok) {
-                    const errText = await patchResponse.text();
-                    throw new Error(`Failed to end patrol (${patchResponse.status}): ${errText}`);
+                    throw new Error(`Failed to end patrol (${patchResponse.status})`);
                   }
+
                   const patchData = await patchResponse.json();
                   if (patchData?.warning === 'duration_not_saved') {
                     console.warn('Duration was not persisted:', patchData?.details);
@@ -1311,44 +1350,52 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
                     );
                   }
 
-                  // Clear persistent patrol data
+                  await AsyncStorage.removeItem(ONGOING_PATROL_STORAGE_KEY);
+                } catch (error) {
+                  // Offline fallback: queue the end patrol and clear local state anyway
+                  console.warn('[Offline] Ending patrol offline, will sync later:', error);
+                  await enqueue({
+                    type: 'end_patrol',
+                    endpoint: `/patrols/${patrolId}`,
+                    method: 'PATCH',
+                    body: patchBody,
+                    localPatrolId: patrolId.startsWith('temp_') ? patrolId : undefined,
+                  });
                   await AsyncStorage.removeItem(ONGOING_PATROL_STORAGE_KEY);
                 }
-
-                setIsRecording(false);
-                setPatrolId(null);
-                setStartTime(null);
-                setLocationData([]);
-                setCurrentLocation(null);
-                lastAcceptedForegroundPointRef.current = null;
-                consecutiveForegroundMovementRef.current = 0;
-                setRecordingStatus('Patrol completed successfully');
-                setRecordingTime(0);
-                
-                // Refresh patrol history
-                await fetchPatrolHistory();
-                
-                setTimeout(() => setRecordingStatus(''), 3000);
-              } catch (error) {
-                console.error('Error ending patrol:', error);
-                Alert.alert('Error', 'Failed to save patrol data. Please try again.');
               }
+
+              setIsRecording(false);
+              setPatrolId(null);
+              setStartTime(null);
+              setLocationData([]);
+              setCurrentLocation(null);
+              lastAcceptedForegroundPointRef.current = null;
+              consecutiveForegroundMovementRef.current = 0;
+              setRecordingStatus('Patrol completed successfully');
+              setRecordingTime(0);
+
+              // Refresh patrol history
+              await fetchPatrolHistory();
+
+              setTimeout(() => setRecordingStatus(''), 3000);
             }
           }
         ]
       );
     } else {
       // Start recording
+      const { token, userData: storedUserData } = await getUserSession();
+      if (!token || !storedUserData) {
+        Alert.alert('Error', 'Session not found. Please login again.');
+        return;
+      }
+
+      const orgId = storedUserData.invite_code || null;
+      const now = new Date().toISOString();
+      let newPatrolId: string;
+
       try {
-        const { token, userData: storedUserData } = await getUserSession();
-        if (!token || !storedUserData) {
-          Alert.alert('Error', 'Session not found. Please login again.');
-          return;
-        }
-
-        const orgId = storedUserData.invite_code || null;
-        const now = new Date().toISOString();
-
         // Create patrol record in Directus
         const response = await fetch(`${API_URL}/patrols`, {
           method: 'POST',
@@ -1365,47 +1412,62 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
 
         if (response.ok) {
           const data = await response.json();
-          const newPatrolId = data.data?.id || data.id;
-          const startDate = new Date(now);
-          setPatrolId(newPatrolId);
-          setStartTime(startDate);
-
-          // Persist patrol data to AsyncStorage
-          await AsyncStorage.setItem(ONGOING_PATROL_STORAGE_KEY, JSON.stringify({
-            patrolId: newPatrolId,
-            startTime: now,
-            locationData: [],
-          }));
+          newPatrolId = data.data?.id || data.id;
+        } else {
+          throw new Error(`Server responded with ${response.status}`);
         }
-
-        setIsRecording(true);
-        setRecordingTime(0);
-        setLocationData([]);
-        setCurrentLocation(null);
-        lastAcceptedForegroundPointRef.current = null;
-        consecutiveForegroundMovementRef.current = 0;
-        setRecordingStatus('Patrol recording started');
-        setTimeout(() => setRecordingStatus(''), 3000);
-
-        await AsyncStorage.multiRemove([
-          BACKGROUND_LOCATION_BUFFER_KEY,
-          BACKGROUND_LAST_SENT_AT_KEY,
-          BACKGROUND_LOCATION_FILTER_STATE_KEY,
-        ]);
-
-        // Start location tracking
-        const backgroundStarted = await startBackgroundLocationTracking();
-        if (!backgroundStarted) {
-          Alert.alert(
-            'Background Tracking Disabled',
-            'Background location permission was not granted. Coordinates will only sync while the app is open.'
-          );
-        }
-        startLocationTracking();
       } catch (error) {
-        console.error('Error starting patrol:', error);
-        Alert.alert('Error', 'Failed to start patrol. Please try again.');
+        // Offline fallback: use temp ID and queue the creation
+        console.warn('[Offline] Starting patrol offline, will sync later:', error);
+        newPatrolId = `temp_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+        await enqueue({
+          type: 'create_patrol',
+          endpoint: '/patrols',
+          method: 'POST',
+          body: {
+            start_time: now,
+            user_id: storedUserData.id,
+            organization_id: orgId,
+          },
+          localPatrolId: newPatrolId,
+        });
       }
+
+      const startDate = new Date(now);
+      setPatrolId(newPatrolId);
+      setStartTime(startDate);
+
+      await AsyncStorage.setItem(ONGOING_PATROL_STORAGE_KEY, JSON.stringify({
+        patrolId: newPatrolId,
+        startTime: now,
+        locationData: [],
+        pendingCreate: newPatrolId.startsWith('temp_'),
+      }));
+
+      setIsRecording(true);
+      setRecordingTime(0);
+      setLocationData([]);
+      setCurrentLocation(null);
+      lastAcceptedForegroundPointRef.current = null;
+      consecutiveForegroundMovementRef.current = 0;
+      setRecordingStatus('Patrol recording started');
+      setTimeout(() => setRecordingStatus(''), 3000);
+
+      await AsyncStorage.multiRemove([
+        BACKGROUND_LOCATION_BUFFER_KEY,
+        BACKGROUND_LAST_SENT_AT_KEY,
+        BACKGROUND_LOCATION_FILTER_STATE_KEY,
+      ]);
+
+      // Start location tracking
+      const backgroundStarted = await startBackgroundLocationTracking();
+      if (!backgroundStarted) {
+        Alert.alert(
+          'Background Tracking Disabled',
+          'Background location permission was not granted. Coordinates will only sync while the app is open.'
+        );
+      }
+      startLocationTracking();
     }
   };
 
@@ -1415,10 +1477,58 @@ const [activeTab, setActiveTab] = useState<'patrol' | 'logs' | 'details' | 'sett
     setCheckpointModalVisible(true);
   };
 
-  const submitCheckpoint = (note: string) => {
-    Alert.alert('Checkpoint Logged', `Area: ${currentCheckpoint}\nNote: ${note || 'None'}`);
+  const submitCheckpoint = async (note: string) => {
+    const area = currentCheckpoint;
     setCheckpointModalVisible(false);
     setCurrentCheckpoint('');
+
+    const checkpointBody = {
+      title: `Checkpoint: ${area}`,
+      description: note || 'Checkpoint visited',
+      category: 'checkpoint',
+      patrol_id: patrolId,
+      images: null,
+    };
+
+    const { token } = await getUserSession();
+    if (!token) {
+      await enqueue({
+        type: 'checkpoint',
+        endpoint: '/logs',
+        method: 'POST',
+        body: checkpointBody,
+        localPatrolId: patrolId?.startsWith('temp_') ? patrolId : undefined,
+      });
+      Alert.alert('Checkpoint Saved Offline', `Area: ${area}\nNote: ${note || 'None'}\nWill sync when online.`);
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/logs`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(checkpointBody),
+      });
+
+      if (response.ok) {
+        Alert.alert('Checkpoint Logged', `Area: ${area}\nNote: ${note || 'None'}`);
+        await fetchLogs();
+        return;
+      }
+      throw new Error(`Server responded with ${response.status}`);
+    } catch {
+      await enqueue({
+        type: 'checkpoint',
+        endpoint: '/logs',
+        method: 'POST',
+        body: checkpointBody,
+        localPatrolId: patrolId?.startsWith('temp_') ? patrolId : undefined,
+      });
+      Alert.alert('Checkpoint Saved Offline', `Area: ${area}\nNote: ${note || 'None'}\nWill sync when online.`);
+    }
   };
 
   // Handle area toggle
